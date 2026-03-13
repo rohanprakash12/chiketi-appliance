@@ -1,0 +1,25 @@
+hosts:
+  - name: "gpu-server"
+    host: 192.168.1.50
+    user: rohan
+    key: ~/.ssh/id_rsa
+
+  - name: "web-server"
+    host: 192.168.1.51
+    user: deploy
+    key: ~/.ssh/id_rsa
+
+  - name: "nas"
+    host: 192.168.1.52
+    user: admin
+    password_env: NAS_PASSWORD  # read from environment variable
+
+display:
+  theme: Panel/Gold
+  rotate_interval: 10
+  host_rotate: true
+  host_rotate_interval: 30
+
+server:
+  port: 7777
+  bind: 0.0.0.0
