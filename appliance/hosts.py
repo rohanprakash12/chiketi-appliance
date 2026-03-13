@@ -105,3 +105,31 @@ def load_config(path: str) -> ApplianceConfig:
     server = raw.get("server", {})
 
     return ApplianceConfig(hosts=hosts, display=display, server=server)
+
+
+def save_config(config: ApplianceConfig, path: str | None = None) -> str:
+    """Save config to YAML. Returns path written to."""
+    if path is None:
+        path = default_config_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = {
+        "hosts": [
+            {k: v for k, v in {
+                "name": h.name,
+                "host": h.host,
+                "port": h.port if h.port != 22 else None,
+                "user": h.user,
+                "key": h.key_path,
+            }.items() if v is not None}
+            for h in config.hosts
+        ],
+        "display": config.display,
+        "server": config.server,
+    }
+    # Write atomically
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+    return path

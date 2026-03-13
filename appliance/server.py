@@ -20,6 +20,19 @@ CONTROL_PORT = 7777
 # Module-level metrics getter — set by app.py after engine starts
 _get_metrics = None
 
+# ── Setup wizard state ──
+_setup_mode_flag = False
+_staged_hosts: list[dict] = []  # hosts added during setup, not yet saved
+
+
+def set_setup_mode(enabled: bool) -> None:
+    global _setup_mode_flag
+    _setup_mode_flag = enabled
+
+
+def is_setup_mode() -> bool:
+    return _setup_mode_flag
+
 # Display configuration
 _display_output: str = ""  # empty = auto/default
 _display_brightness: float = 1.0
@@ -168,6 +181,69 @@ def _serialize_metrics() -> dict:
 
 class ControlHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        # ── Setup wizard routes ──
+        if _setup_mode_flag and (self.path == "/" or self.path == "/index.html"):
+            self.send_response(302)
+            self.send_header("Location", "/setup")
+            self.end_headers()
+            return
+        if self.path == "/setup":
+            if not _setup_mode_flag:
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
+            html = _build_setup_html()
+            body = html.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path == "/api/setup/status":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._json_response({
+                "setup_mode": _setup_mode_flag,
+                "hosts": _staged_hosts,
+            })
+            return
+        if self.path == "/api/setup/ssh-key":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._handle_ssh_key_get()
+            return
+        if self.path == "/api/setup/themes":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            # Reuse the themes listing logic
+            families = {}
+            for family_name, themes in get_families().items():
+                families[family_name] = {
+                    t.name: {
+                        "primary": t.primary,
+                        "accent": t.accent,
+                        "background": t.background,
+                        "panel": t.panel,
+                        "border": t.border,
+                        "header": t.header,
+                        "dim": t.dim,
+                        "critical": t.critical,
+                    }
+                    for t in themes
+                }
+            self._json_response({
+                "active_family": get_active_family(),
+                "active_variant": get_active_theme().name,
+                "families": families,
+            })
+            return
+
+        # ── Normal routes ──
         if self.path == "/" or self.path == "/index.html":
             self._serve_ui()
         elif self.path == "/display":
@@ -224,6 +300,34 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path
+
+        # ── Setup wizard POST routes ──
+        if path == "/api/setup/test-connection":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._handle_test_connection()
+            return
+        if path == "/api/setup/add-host":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._handle_add_host()
+            return
+        if path == "/api/setup/remove-host":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._handle_remove_host()
+            return
+        if path == "/api/setup/finish":
+            if not _setup_mode_flag:
+                self.send_error(404)
+                return
+            self._handle_setup_finish()
+            return
+
+        # ── Normal POST routes ──
         if path.startswith("/api/theme/"):
             rest = path.split("/api/theme/", 1)[1]
             # Support both /api/theme/family/variant and /api/theme/variant
@@ -345,27 +449,1145 @@ class ControlHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ── Setup wizard handler methods ──
+
+    def _read_json_body(self) -> dict:
+        """Read and parse JSON request body."""
+        length = int(self.headers.get("Content-Length", 0))
+        if length == 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw)
+
+    def _json_error(self, status: int, message: str) -> None:
+        """Send a JSON error response."""
+        body = json.dumps({"success": False, "error": message}).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_ssh_key_get(self) -> None:
+        """GET /api/setup/ssh-key — return or generate an SSH key."""
+        import paramiko
+
+        ssh_dir = os.path.expanduser("~/.ssh")
+        ed25519_path = os.path.join(ssh_dir, "id_ed25519")
+        rsa_path = os.path.join(ssh_dir, "id_rsa")
+
+        # Check for existing keys
+        for key_path, key_type in [(ed25519_path, "ed25519"), (rsa_path, "rsa")]:
+            pub_path = key_path + ".pub"
+            if os.path.isfile(key_path) and os.path.isfile(pub_path):
+                try:
+                    with open(pub_path, "r") as f:
+                        public_key = f.read().strip()
+                    self._json_response({
+                        "public_key": public_key,
+                        "key_path": key_path,
+                        "generated": False,
+                    })
+                    return
+                except Exception:
+                    continue
+
+        # Generate a new ed25519 key
+        try:
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+            key = paramiko.Ed25519Key.generate()
+            key.write_private_key_file(ed25519_path)
+            os.chmod(ed25519_path, 0o600)
+
+            # Write public key file
+            import socket
+            hostname = socket.gethostname()
+            username = os.environ.get("USER", "chiketi")
+            pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
+            with open(ed25519_path + ".pub", "w") as f:
+                f.write(pub_line + "\n")
+            os.chmod(ed25519_path + ".pub", 0o644)
+
+            self._json_response({
+                "public_key": pub_line,
+                "key_path": ed25519_path,
+                "generated": True,
+            })
+        except Exception as exc:
+            self._json_error(500, f"Failed to generate SSH key: {exc}")
+
+    def _handle_test_connection(self) -> None:
+        """POST /api/setup/test-connection — test SSH connection to a host."""
+        import paramiko
+
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        host = body.get("host", "").strip()
+        user = body.get("user", "").strip()
+        port = int(body.get("port", 22))
+        password = body.get("password")
+
+        if not host or not user:
+            self._json_error(400, "host and user are required")
+            return
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            connect_kwargs: dict = {
+                "hostname": host,
+                "username": user,
+                "port": port,
+                "timeout": 10,
+                "allow_agent": True,
+                "look_for_keys": True,
+            }
+            if password:
+                connect_kwargs["password"] = password
+                connect_kwargs["look_for_keys"] = False
+                connect_kwargs["allow_agent"] = False
+
+            # Try with explicit key files if no password
+            if not password:
+                ssh_dir = os.path.expanduser("~/.ssh")
+                for key_name in ("id_ed25519", "id_rsa"):
+                    key_file = os.path.join(ssh_dir, key_name)
+                    if os.path.isfile(key_file):
+                        connect_kwargs["key_filename"] = key_file
+                        break
+
+            client.connect(**connect_kwargs)
+            _, stdout, _ = client.exec_command(
+                "hostname && cat /proc/uptime", timeout=10,
+            )
+            output = stdout.read().decode("utf-8", errors="replace").strip()
+            lines = output.splitlines()
+            hostname_result = lines[0] if lines else "unknown"
+            uptime_str = ""
+            if len(lines) > 1:
+                try:
+                    secs = float(lines[1].split()[0])
+                    days = int(secs // 86400)
+                    hours = int((secs % 86400) // 3600)
+                    mins = int((secs % 3600) // 60)
+                    parts = []
+                    if days:
+                        parts.append(f"{days}d")
+                    if hours:
+                        parts.append(f"{hours}h")
+                    parts.append(f"{mins}m")
+                    uptime_str = " ".join(parts)
+                except Exception:
+                    uptime_str = lines[1]
+
+            self._json_response({
+                "success": True,
+                "hostname": hostname_result,
+                "uptime": uptime_str,
+            })
+        except Exception as exc:
+            self._json_response({
+                "success": False,
+                "error": str(exc),
+            })
+        finally:
+            client.close()
+
+    def _handle_add_host(self) -> None:
+        """POST /api/setup/add-host — add a host to the staged list."""
+        global _staged_hosts
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        name = body.get("name", "").strip()
+        host = body.get("host", "").strip()
+        user = body.get("user", "").strip()
+        port = int(body.get("port", 22))
+
+        if not name:
+            self._json_error(400, "name is required")
+            return
+        if not host:
+            self._json_error(400, "host is required")
+            return
+        if not user:
+            self._json_error(400, "user is required")
+            return
+
+        # Check for duplicate name
+        for h in _staged_hosts:
+            if h["name"] == name:
+                self._json_error(400, f"Host with name '{name}' already exists")
+                return
+
+        _staged_hosts.append({
+            "name": name,
+            "host": host,
+            "user": user,
+            "port": port,
+        })
+        self._json_response({"success": True, "hosts": _staged_hosts})
+
+    def _handle_remove_host(self) -> None:
+        """POST /api/setup/remove-host — remove a host from the staged list."""
+        global _staged_hosts
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        name = body.get("name", "").strip()
+        if not name:
+            self._json_error(400, "name is required")
+            return
+
+        original_len = len(_staged_hosts)
+        _staged_hosts = [h for h in _staged_hosts if h["name"] != name]
+        if len(_staged_hosts) == original_len:
+            self._json_error(404, f"Host '{name}' not found")
+            return
+
+        self._json_response({"success": True, "hosts": _staged_hosts})
+
+    def _handle_setup_finish(self) -> None:
+        """POST /api/setup/finish — save config and transition to monitoring."""
+        global _staged_hosts
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        if not _staged_hosts:
+            self._json_error(400, "At least one host must be added before finishing setup")
+            return
+
+        from appliance.hosts import ApplianceConfig, HostConfig, save_config
+
+        # Determine SSH key path
+        ssh_dir = os.path.expanduser("~/.ssh")
+        key_path = None
+        for key_name in ("id_ed25519", "id_rsa"):
+            candidate = os.path.join(ssh_dir, key_name)
+            if os.path.isfile(candidate):
+                key_path = candidate
+                break
+
+        hosts = []
+        for h in _staged_hosts:
+            hosts.append(HostConfig(
+                name=h["name"],
+                host=h["host"],
+                user=h["user"],
+                port=h.get("port", 22),
+                key_path=key_path,
+            ))
+
+        display: dict = {}
+        theme = body.get("theme")
+        if theme:
+            display["theme"] = theme
+
+        server_cfg: dict = {"port": CONTROL_PORT}
+
+        config = ApplianceConfig(hosts=hosts, display=display, server=server_cfg)
+
+        try:
+            config_path = save_config(config)
+        except Exception as exc:
+            self._json_error(500, f"Failed to save config: {exc}")
+            return
+
+        self._json_response({
+            "success": True,
+            "config_path": config_path,
+        })
+
+        # Transition to monitoring mode in a background thread to allow
+        # the HTTP response to be sent first
+        from appliance.app import complete_setup
+
+        def _finish():
+            import time
+            time.sleep(0.5)
+            complete_setup(config)
+
+        _staged_hosts = []
+        threading.Thread(target=_finish, daemon=True).start()
+
     def log_message(self, format, *args) -> None:
         pass  # Silence request logging
 
 
+def _build_setup_html() -> str:
+    """Return the full setup wizard HTML page (self-contained with inline CSS/JS)."""
+    return r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chiketi-appliance — Setup</title>
+<style>
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/assets/fonts/ChakraPetch-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/assets/fonts/ChakraPetch-Bold.ttf') format('truetype');
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/assets/fonts/ChakraPetch-Light.ttf') format('truetype');
+  font-weight: 300;
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0a0a;
+  --surface: #141414;
+  --surface2: #1a1a1a;
+  --border: #2a2a2a;
+  --green: #00ff41;
+  --green-dim: #00cc33;
+  --green-glow: rgba(0,255,65,0.15);
+  --red: #ff3333;
+  --yellow: #ffcc00;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --text-muted: #555;
+  --radius: 8px;
+}
+
+body {
+  font-family: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wizard {
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Progress dots ── */
+.progress {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 0 0.5rem;
+}
+.dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.dot.active {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green-glow);
+}
+.dot.done {
+  background: var(--green-dim);
+}
+
+/* ── Step container ── */
+.step { display: none; animation: fadeIn 0.3s ease; }
+.step.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ── Cards ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Typography ── */
+h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--green);
+  text-align: center;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 0.75rem;
+}
+.subtitle {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-top: 0.5rem;
+}
+
+/* ── Form elements ── */
+label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.3rem;
+  margin-top: 0.75rem;
+}
+label:first-child { margin-top: 0; }
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, textarea:focus {
+  border-color: var(--green);
+}
+textarea {
+  resize: none;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.5rem;
+  border: 1px solid var(--green);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--green);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  width: 100%;
+  margin-top: 1rem;
+}
+.btn:hover {
+  background: var(--green);
+  color: var(--bg);
+  box-shadow: 0 0 16px var(--green-glow);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: transparent;
+  color: var(--green);
+  box-shadow: none;
+}
+.btn-sm {
+  padding: 0.45rem 1rem;
+  font-size: 0.8rem;
+  width: auto;
+  margin-top: 0;
+}
+.btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+.btn-danger:hover {
+  background: var(--red);
+  color: #fff;
+  box-shadow: 0 0 16px rgba(255,51,51,0.2);
+}
+.btn-secondary {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.btn-secondary:hover {
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: none;
+}
+.btn-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.btn-row .btn { flex: 1; }
+
+/* ── Status indicators ── */
+.spinner {
+  display: inline-block;
+  width: 20px; height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status-msg {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.status-msg.success { color: var(--green); }
+.status-msg.error { color: var(--red); }
+
+/* ── Host list ── */
+.host-list { list-style: none; }
+.host-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+.host-item .host-info { flex: 1; }
+.host-item .host-name { font-weight: 700; color: var(--green); }
+.host-item .host-addr { font-size: 0.8rem; color: var(--text-dim); }
+
+/* ── Copyable area ── */
+.copy-wrap {
+  position: relative;
+}
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+}
+.copy-btn:hover { color: var(--green); border-color: var(--green); }
+
+/* ── Theme picker ── */
+.theme-families { display: flex; flex-direction: column; gap: 1rem; }
+.theme-family-name {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
+}
+.theme-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.swatch {
+  width: 42px; height: 42px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+  position: relative;
+}
+.swatch:hover { transform: scale(1.1); }
+.swatch.selected {
+  border-color: var(--green);
+  box-shadow: 0 0 10px var(--green-glow);
+}
+.swatch-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 10;
+}
+.swatch:hover .swatch-tooltip { display: block; }
+
+/* ── Finish summary ── */
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.95rem;
+}
+.summary-row:last-child { border-bottom: none; }
+.summary-label { color: var(--text-dim); }
+.summary-value { color: var(--green); font-weight: 700; }
+
+/* ── Connecting overlay ── */
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 1rem;
+}
+.overlay.show { display: flex; }
+.overlay .spinner { width: 40px; height: 40px; border-width: 3px; }
+.overlay p { color: var(--green); font-size: 1.1rem; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<div class="wizard">
+  <div class="progress" id="progress"></div>
+  <div id="steps"></div>
+</div>
+<div class="overlay" id="overlay">
+  <div class="spinner"></div>
+  <p id="overlay-msg">Connecting to servers...</p>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const STEPS = ['welcome','add-server','ssh-key','test','servers','theme','finish'];
+let state = {
+  step: 0,
+  hosts: [],
+  currentHost: { name:'', host:'', user:'', port:22 },
+  sshKey: null,
+  theme: 'Panel/Gold',
+  themes: null,
+  testResult: null,
+  testPassword: '',
+};
+
+function $(sel, ctx) { return (ctx||document).querySelector(sel); }
+function $$(sel, ctx) { return Array.from((ctx||document).querySelectorAll(sel)); }
+
+/* ── Progress dots ── */
+function renderProgress() {
+  const el = document.getElementById('progress');
+  el.innerHTML = STEPS.map((_,i) => {
+    let cls = 'dot';
+    if (i < state.step) cls += ' done';
+    if (i === state.step) cls += ' active';
+    return `<div class="${cls}"></div>`;
+  }).join('');
+}
+
+/* ── Step rendering ── */
+function goTo(n) {
+  state.step = Math.max(0, Math.min(STEPS.length-1, n));
+  renderProgress();
+  renderStep();
+}
+
+function renderStep() {
+  const container = document.getElementById('steps');
+  const stepName = STEPS[state.step];
+  const renderers = {
+    'welcome': renderWelcome,
+    'add-server': renderAddServer,
+    'ssh-key': renderSSHKey,
+    'test': renderTest,
+    'servers': renderServers,
+    'theme': renderTheme,
+    'finish': renderFinish,
+  };
+  container.innerHTML = `<div class="step active">${renderers[stepName]()}</div>`;
+  bindStep(stepName);
+}
+
+/* ── Step 0: Welcome ── */
+function renderWelcome() {
+  return `
+    <div style="padding:2rem 0;text-align:center;">
+      <h1>CHIKETI<br>APPLIANCE</h1>
+      <p class="subtitle" style="margin-top:1.5rem;">
+        Remote system monitoring dashboard.<br>
+        Monitor your Linux servers from a Raspberry Pi.
+      </p>
+      <p class="subtitle" style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
+        This wizard will help you connect to your servers<br>
+        and configure the dashboard.
+      </p>
+      <button class="btn" id="btn-start" style="margin-top:2rem;">Get Started</button>
+    </div>`;
+}
+
+/* ── Step 1: Add Server ── */
+function renderAddServer() {
+  const h = state.currentHost;
+  return `
+    <h2>Add Server</h2>
+    <div class="card">
+      <label for="srv-name">Display Name</label>
+      <input type="text" id="srv-name" placeholder="e.g. gpu-server" value="${esc(h.name)}">
+      <label for="srv-host">Host / IP Address</label>
+      <input type="text" id="srv-host" placeholder="e.g. 192.168.1.50" value="${esc(h.host)}">
+      <label for="srv-user">Username</label>
+      <input type="text" id="srv-user" placeholder="e.g. rohan" value="${esc(h.user)}">
+      <label for="srv-port">SSH Port</label>
+      <input type="number" id="srv-port" value="${h.port}" min="1" max="65535">
+    </div>
+    <button class="btn" id="btn-to-ssh">Next</button>`;
+}
+
+/* ── Step 2: SSH Key ── */
+function renderSSHKey() {
+  if (!state.sshKey) {
+    return `
+      <h2>SSH Key</h2>
+      <div class="card">
+        <div class="status-msg"><div class="spinner"></div><br>Loading SSH key...</div>
+      </div>`;
+  }
+  const k = state.sshKey;
+  const genNote = k.generated
+    ? `<p style="color:var(--yellow);font-size:0.8rem;margin-top:0.5rem;">A new key was generated at ${esc(k.key_path)}</p>`
+    : '';
+  return `
+    <h2>SSH Key</h2>
+    <div class="card">
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">
+        Add this public key to your server's <code style="color:var(--green);">~/.ssh/authorized_keys</code>:
+      </p>
+      <div class="copy-wrap">
+        <textarea id="pubkey-area" rows="3" readonly>${esc(k.public_key)}</textarea>
+        <button class="copy-btn" id="btn-copy-key">COPY</button>
+      </div>
+      ${genNote}
+      <p style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem;">One-liner to add the key on the server:</p>
+      <div class="copy-wrap" style="margin-top:0.3rem;">
+        <textarea id="cmd-area" rows="2" readonly>echo '${esc(k.public_key)}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys</textarea>
+        <button class="copy-btn" id="btn-copy-cmd">COPY</button>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.5rem;">
+        Or enter the server password to connect (key-based auth will be tried first):
+      </p>
+      <label for="ssh-password">Password (optional)</label>
+      <input type="password" id="ssh-password" placeholder="Leave blank to use key only" value="${esc(state.testPassword)}">
+    </div>
+    <button class="btn" id="btn-to-test">Next</button>`;
+}
+
+/* ── Step 3: Test Connection ── */
+function renderTest() {
+  let statusHTML = '';
+  if (state.testResult === null) {
+    statusHTML = `<p class="status-msg" style="color:var(--text-dim);">Press the button to verify the connection.</p>`;
+  } else if (state.testResult === 'loading') {
+    statusHTML = `<div class="status-msg"><div class="spinner"></div><br>Connecting to ${esc(state.currentHost.host)}...</div>`;
+  } else if (state.testResult.success) {
+    statusHTML = `
+      <div class="status-msg success">
+        <span style="font-size:2rem;">&#10003;</span><br>
+        Connected successfully!<br>
+        <span style="font-size:0.85rem;color:var(--text-dim);">
+          Hostname: <strong style="color:var(--green);">${esc(state.testResult.hostname)}</strong><br>
+          Uptime: ${esc(state.testResult.uptime || 'N/A')}
+        </span>
+      </div>`;
+  } else {
+    statusHTML = `
+      <div class="status-msg error">
+        <span style="font-size:2rem;">&#10007;</span><br>
+        Connection failed<br>
+        <span style="font-size:0.85rem;">${esc(state.testResult.error)}</span>
+      </div>`;
+  }
+  const canProceed = state.testResult && state.testResult.success;
+  return `
+    <h2>Test Connection</h2>
+    <div class="card">
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">
+        Testing: <strong style="color:var(--text);">${esc(state.currentHost.user)}@${esc(state.currentHost.host)}:${state.currentHost.port}</strong>
+      </p>
+      ${statusHTML}
+      <button class="btn" id="btn-test" ${state.testResult==='loading'?'disabled':''}>
+        ${state.testResult && !state.testResult.success ? 'Retry' : 'Test Connection'}
+      </button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btn-test-back">Back</button>
+      <button class="btn" id="btn-test-next" ${canProceed?'':'disabled'}>Add Server</button>
+    </div>`;
+}
+
+/* ── Step 4: Server List ── */
+function renderServers() {
+  let listHTML = '';
+  if (state.hosts.length === 0) {
+    listHTML = `<p class="status-msg" style="color:var(--text-dim);">No servers added yet.</p>`;
+  } else {
+    listHTML = `<ul class="host-list">${state.hosts.map(h => `
+      <li class="host-item">
+        <div class="host-info">
+          <div class="host-name">${esc(h.name)}</div>
+          <div class="host-addr">${esc(h.user)}@${esc(h.host)}:${h.port}</div>
+        </div>
+        <button class="btn btn-sm btn-danger" data-remove="${esc(h.name)}">Remove</button>
+      </li>`).join('')}</ul>`;
+  }
+  return `
+    <h2>Servers (${state.hosts.length})</h2>
+    <div class="card">
+      ${listHTML}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btn-add-another">Add Another Server</button>
+      <button class="btn" id="btn-to-theme" ${state.hosts.length===0?'disabled':''}>Continue</button>
+    </div>`;
+}
+
+/* ── Step 5: Theme Picker ── */
+function renderTheme() {
+  if (!state.themes) {
+    return `
+      <h2>Choose Theme</h2>
+      <div class="card">
+        <div class="status-msg"><div class="spinner"></div><br>Loading themes...</div>
+      </div>`;
+  }
+  let familiesHTML = '';
+  const families = state.themes.families;
+  for (const fam of Object.keys(families)) {
+    const variants = families[fam];
+    let swatchesHTML = '';
+    for (const vname of Object.keys(variants)) {
+      const v = variants[vname];
+      const fullName = fam + '/' + vname;
+      const sel = state.theme === fullName ? ' selected' : '';
+      swatchesHTML += `
+        <div class="swatch${sel}" data-theme="${esc(fullName)}"
+             style="background: linear-gradient(135deg, ${v.primary} 0%, ${v.accent} 50%, ${v.background} 100%);">
+          <div class="swatch-tooltip">${esc(vname)}</div>
+        </div>`;
+    }
+    familiesHTML += `
+      <div>
+        <div class="theme-family-name">${esc(fam)}</div>
+        <div class="theme-swatches">${swatchesHTML}</div>
+      </div>`;
+  }
+  return `
+    <h2>Choose Theme</h2>
+    <div class="card">
+      <div class="theme-families">${familiesHTML}</div>
+    </div>
+    <p style="text-align:center;font-size:0.8rem;color:var(--text-dim);margin-bottom:0.5rem;">
+      Selected: <strong style="color:var(--green);">${esc(state.theme)}</strong>
+    </p>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btn-theme-back">Back</button>
+      <button class="btn" id="btn-to-finish">Continue</button>
+    </div>`;
+}
+
+/* ── Step 6: Finish ── */
+function renderFinish() {
+  const hostNames = state.hosts.map(h => h.name).join(', ');
+  return `
+    <h2>Ready to Go</h2>
+    <div class="card">
+      <div class="summary-row">
+        <span class="summary-label">Servers</span>
+        <span class="summary-value">${state.hosts.length}</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-label">Hosts</span>
+        <span class="summary-value">${esc(hostNames)}</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-label">Theme</span>
+        <span class="summary-value">${esc(state.theme)}</span>
+      </div>
+    </div>
+    <button class="btn" id="btn-finish" style="font-size:1.1rem;padding:0.9rem;">
+      Start Monitoring
+    </button>
+    <button class="btn btn-secondary" id="btn-finish-back" style="margin-top:0.5rem;">Back</button>`;
+}
+
+/* ── Event binding ── */
+function bindStep(stepName) {
+  switch(stepName) {
+    case 'welcome':
+      on('btn-start', () => goTo(1));
+      break;
+
+    case 'add-server':
+      on('btn-to-ssh', () => {
+        const name = val('srv-name'), host = val('srv-host'), user = val('srv-user');
+        const port = parseInt($('#srv-port').value, 10) || 22;
+        if (!name || !host || !user) { alert('Please fill in all fields.'); return; }
+        state.currentHost = { name, host, user, port };
+        state.testResult = null;
+        fetchSSHKey();
+        goTo(2);
+      });
+      break;
+
+    case 'ssh-key':
+      if (state.sshKey) {
+        on('btn-copy-key', () => copyText('pubkey-area'));
+        on('btn-copy-cmd', () => copyText('cmd-area'));
+      }
+      on('btn-to-test', () => {
+        const pw = $('#ssh-password');
+        state.testPassword = pw ? pw.value : '';
+        goTo(3);
+      });
+      break;
+
+    case 'test':
+      on('btn-test', doTest);
+      on('btn-test-back', () => goTo(2));
+      on('btn-test-next', () => {
+        addHost();
+      });
+      break;
+
+    case 'servers':
+      on('btn-add-another', () => {
+        state.currentHost = { name:'', host:'', user:'', port:22 };
+        state.testResult = null;
+        state.testPassword = '';
+        goTo(1);
+      });
+      on('btn-to-theme', () => {
+        fetchThemes();
+        goTo(5);
+      });
+      $$('[data-remove]').forEach(btn => {
+        btn.addEventListener('click', () => removeHost(btn.dataset.remove));
+      });
+      break;
+
+    case 'theme':
+      $$('.swatch').forEach(s => {
+        s.addEventListener('click', () => {
+          state.theme = s.dataset.theme;
+          renderStep();
+        });
+      });
+      on('btn-theme-back', () => goTo(4));
+      on('btn-to-finish', () => goTo(6));
+      break;
+
+    case 'finish':
+      on('btn-finish', doFinish);
+      on('btn-finish-back', () => goTo(5));
+      break;
+  }
+}
+
+/* ── Helpers ── */
+function on(id, fn) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', fn);
+}
+function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function copyText(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.select();
+  navigator.clipboard.writeText(el.value).catch(() => document.execCommand('copy'));
+  const btn = el.parentElement.querySelector('.copy-btn');
+  if (btn) { btn.textContent = 'COPIED'; setTimeout(() => btn.textContent = 'COPY', 1500); }
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const text = await r.text();
+    try { return JSON.parse(text); } catch(e) {}
+    return { success: false, error: 'Server error: ' + r.status };
+  }
+  return r.json();
+}
+
+/* ── API calls ── */
+async function fetchSSHKey() {
+  if (state.sshKey) return;
+  try {
+    const data = await api('GET', '/api/setup/ssh-key');
+    state.sshKey = data;
+  } catch(e) {
+    state.sshKey = { public_key: 'Error loading key: ' + e.message, key_path: '', generated: false };
+  }
+  if (STEPS[state.step] === 'ssh-key') renderStep();
+}
+
+async function fetchThemes() {
+  if (state.themes) return;
+  try {
+    state.themes = await api('GET', '/api/setup/themes');
+  } catch(e) {
+    state.themes = { families: {} };
+  }
+  if (STEPS[state.step] === 'theme') renderStep();
+}
+
+async function doTest() {
+  state.testResult = 'loading';
+  renderStep();
+  try {
+    const body = {
+      host: state.currentHost.host,
+      user: state.currentHost.user,
+      port: state.currentHost.port,
+    };
+    if (state.testPassword) body.password = state.testPassword;
+    state.testResult = await api('POST', '/api/setup/test-connection', body);
+  } catch(e) {
+    state.testResult = { success: false, error: e.message };
+  }
+  renderStep();
+}
+
+async function addHost() {
+  try {
+    const data = await api('POST', '/api/setup/add-host', state.currentHost);
+    if (data.success) {
+      state.hosts = data.hosts;
+      goTo(4);
+    } else {
+      alert(data.error || 'Failed to add host');
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function removeHost(name) {
+  try {
+    const data = await api('POST', '/api/setup/remove-host', { name });
+    if (data.success) {
+      state.hosts = data.hosts;
+      renderStep();
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doFinish() {
+  const btn = document.getElementById('btn-finish');
+  if (btn) btn.disabled = true;
+  const overlay = document.getElementById('overlay');
+  try {
+    const data = await api('POST', '/api/setup/finish', { theme: state.theme });
+    if (data.success) {
+      overlay.classList.add('show');
+      document.getElementById('overlay-msg').textContent = 'Connecting to servers...';
+      setTimeout(() => {
+        document.getElementById('overlay-msg').textContent = 'Starting dashboard...';
+      }, 2000);
+      setTimeout(() => { window.location.href = '/'; }, 4000);
+    } else {
+      alert(data.error || 'Setup failed');
+      if (btn) btn.disabled = false;
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ── Init ── */
+goTo(0);
+
+})();
+</script>
+</body>
+</html>"""
+
+
+_server_started = False
+
+
 def start_server(port: int | None = None, bind: str | None = None) -> None:
     """Start the control panel server in a daemon thread."""
-    global CONTROL_PORT
+    global CONTROL_PORT, _server_started
+    if _server_started:
+        # Server already running (e.g. setup mode → monitoring transition)
+        if port is not None:
+            CONTROL_PORT = port
+        return
     if port is not None:
         CONTROL_PORT = port
     bind_addr = bind or "0.0.0.0"
     # Ensure a DisplayManager exists even if app.run() was not used
-    from appliance.app import get_display_manager, DisplayManager, _display_mgr
-    import appliance.app as _app_mod
-    if get_display_manager() is None:
-        _app_mod._display_mgr = DisplayManager(
-            f"http://localhost:{CONTROL_PORT}/display"
-        )
+    # (skip in setup mode — no display needed yet)
+    if not _setup_mode_flag:
+        from appliance.app import get_display_manager, DisplayManager, _display_mgr
+        import appliance.app as _app_mod
+        if get_display_manager() is None:
+            _app_mod._display_mgr = DisplayManager(
+                f"http://localhost:{CONTROL_PORT}/display"
+            )
     HTTPServer.allow_reuse_address = True
     server = HTTPServer((bind_addr, CONTROL_PORT), ControlHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    _server_started = True
 
 
 def _build_display_html() -> str:

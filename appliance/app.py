@@ -451,9 +451,61 @@ class DisplayManager:
 # Module-level display manager — set during run()
 _display_mgr: DisplayManager | None = None
 
+# ── Setup wizard mode ──
+_setup_mode = False
+_setup_complete = threading.Event()
+_setup_config: ApplianceConfig | None = None
+
 
 def get_display_manager() -> DisplayManager | None:
     return _display_mgr
+
+
+def run_setup_mode(port: int = 7777) -> int:
+    """Start in setup wizard mode -- no config, no collectors, just the HTTP server."""
+    global _setup_mode, _display_mgr
+    _setup_mode = True
+
+    from appliance.server import start_server, set_setup_mode
+
+    set_setup_mode(True)
+
+    try:
+        start_server(port=port)
+    except OSError as exc:
+        print(f"chiketi-appliance: failed to start: {exc}", file=sys.stderr)
+        return 1
+
+    # Print instructions with IP addresses
+    import socket
+
+    hostname = socket.gethostname()
+    try:
+        ip = socket.gethostbyname(hostname)
+    except Exception:
+        ip = "localhost"
+
+    print(f"chiketi-appliance: Setup wizard running!")
+    print(f"  Open http://{ip}:{port}/ in your browser to configure.")
+    print(f"  (or http://localhost:{port}/ from this machine)")
+
+    # Wait for setup to complete
+    _setup_complete.wait()
+
+    # Transition to monitoring mode
+    set_setup_mode(False)
+    _setup_mode = False
+
+    if _setup_config is not None:
+        return run(config=_setup_config)
+    return 0
+
+
+def complete_setup(config: ApplianceConfig) -> None:
+    """Called by server.py when setup wizard finishes."""
+    global _setup_config
+    _setup_config = config
+    _setup_complete.set()
 
 
 def run(config_path: str | None = None, *, config: ApplianceConfig | None = None) -> int:

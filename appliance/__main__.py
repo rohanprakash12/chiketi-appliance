@@ -113,14 +113,11 @@ def main() -> int:
         if os.path.isfile(default):
             config_path = default
         else:
-            parser.print_help()
-            print(
-                "\nNo configuration found. Create a config file or use --host for quick mode."
-            )
-            print(
-                "Example: chiketi-appliance --host rohan@192.168.1.50 --key ~/.ssh/id_rsa"
-            )
-            return 1
+            # No config file found — launch setup wizard
+            from appliance.app import run_setup_mode
+
+            port = args.port or 7777
+            return run_setup_mode(port=port)
 
     # Apply CLI overrides by loading config, patching, and passing the object
     from appliance.hosts import load_config
