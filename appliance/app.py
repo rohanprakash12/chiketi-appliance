@@ -46,7 +46,9 @@ class MetricEngine(threading.Thread):
 
     def _run_loop(self, pool: ThreadPoolExecutor) -> None:
         while self._running:
-            futures = {pool.submit(c.collect): c for c in self._collectors}
+            with self._lock:
+                collectors = list(self._collectors)
+            futures = {pool.submit(c.collect): c for c in collectors}
             for future in as_completed(futures):
                 collector = futures[future]
                 try:
@@ -489,6 +491,8 @@ def get_display_manager() -> DisplayManager | None:
 
 # Module-level engine reference — set during run()
 _engine: MetricEngine | None = None
+# Original ApplianceConfig — preserved for save_current_config()
+_original_config: ApplianceConfig | None = None
 
 
 def add_host_runtime(host_config: HostConfig) -> bool:
@@ -515,8 +519,10 @@ def save_current_config() -> str | None:
         return None
     from appliance.hosts import ApplianceConfig, save_config
     configs = _engine.get_host_configs()
-    # Preserve existing display/server config
-    ac = ApplianceConfig(hosts=configs, display={}, server={})
+    # Preserve original display/server config
+    display = _original_config.display if _original_config else {}
+    server = _original_config.server if _original_config else {}
+    ac = ApplianceConfig(hosts=configs, display=display, server=server)
     return save_config(ac)
 
 
@@ -573,7 +579,7 @@ def run(config_path: str | None = None, *, config: ApplianceConfig | None = None
     Either *config_path* (path to a YAML file) or *config* (an already-built
     ApplianceConfig) must be provided.  If both are given, *config* wins.
     """
-    global _display_mgr
+    global _display_mgr, _original_config
 
     # Load configuration
     if config is None:
@@ -585,6 +591,8 @@ def run(config_path: str | None = None, *, config: ApplianceConfig | None = None
         except (FileNotFoundError, ValueError) as exc:
             print(f"chiketi-appliance: config error: {exc}", file=sys.stderr)
             return 1
+
+    _original_config = config
 
     print(f"chiketi-appliance: loaded config with {len(config.hosts)} host(s)")
 

@@ -794,7 +794,10 @@ class ControlHandler(BaseHTTPRequestHandler):
 
             hc = HostConfig(name=name, host=host, user=user, port=port, key_path=key_path)
             try:
-                add_host_runtime(hc)
+                ok = add_host_runtime(hc)
+                if not ok:
+                    self._json_error(500, "Failed to add host: engine not available")
+                    return
                 save_current_config()
                 self._json_response({"success": True})
             except Exception as exc:

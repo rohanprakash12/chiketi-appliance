@@ -156,6 +156,7 @@ def save_config(config: ApplianceConfig, path: str | None = None) -> str:
                 "port": h.port if h.port != 22 else None,
                 "user": h.user,
                 "key": h.key_path,
+                "password_env": h.password_env,
             }.items() if v is not None}
             for h in config.hosts
         ],

@@ -214,6 +214,62 @@ class TestSaveConfig(unittest.TestCase):
         save_config(cfg, nested_path)
         self.assertTrue(os.path.isfile(nested_path))
 
+    def test_preserves_display_and_server(self):
+        """save_config should preserve display and server settings."""
+        cfg = ApplianceConfig(
+            hosts=[HostConfig(name="srv", host="10.0.0.1", user="admin")],
+            display={"theme": "Panel/Gold", "rotate_interval": 10, "host_rotate": True},
+            server={"port": 8080, "bind": "0.0.0.0"},
+        )
+        save_config(cfg, self.config_path)
+        loaded = load_config(self.config_path)
+        self.assertEqual(loaded.display["theme"], "Panel/Gold")
+        self.assertEqual(loaded.display["rotate_interval"], 10)
+        self.assertTrue(loaded.display["host_rotate"])
+        self.assertEqual(loaded.server["port"], 8080)
+        self.assertEqual(loaded.server["bind"], "0.0.0.0")
+
+    def test_preserves_password_env(self):
+        """save_config should persist password_env (not the resolved password)."""
+        cfg = ApplianceConfig(
+            hosts=[
+                HostConfig(name="nas", host="10.0.0.2", user="admin", password_env="NAS_PASSWORD"),
+            ],
+        )
+        save_config(cfg, self.config_path)
+        # Read raw YAML to verify the env var name is stored, not the resolved value
+        with open(self.config_path) as f:
+            raw = yaml.safe_load(f)
+        self.assertEqual(raw["hosts"][0]["password_env"], "NAS_PASSWORD")
+        self.assertNotIn("password", raw["hosts"][0])
+        # Also verify roundtrip via load_config
+        loaded = load_config(self.config_path)
+        self.assertEqual(loaded.hosts[0].password_env, "NAS_PASSWORD")
+
+    def test_roundtrip_full(self):
+        """Full roundtrip: save then load, verify all fields match."""
+        cfg = ApplianceConfig(
+            hosts=[
+                HostConfig(name="srv", host="10.0.0.1", user="admin", port=22,
+                           key_path="/home/u/.ssh/id_rsa"),
+                HostConfig(name="nas", host="10.0.0.2", user="root", port=2222,
+                           password_env="NAS_PWD"),
+            ],
+            display={"theme": "Panel/Gold", "rotate_interval": 10},
+            server={"port": 7777},
+        )
+        save_config(cfg, self.config_path)
+        loaded = load_config(self.config_path)
+        self.assertEqual(len(loaded.hosts), 2)
+        self.assertEqual(loaded.hosts[0].name, "srv")
+        self.assertEqual(loaded.hosts[0].key_path, "/home/u/.ssh/id_rsa")
+        self.assertEqual(loaded.hosts[1].name, "nas")
+        self.assertEqual(loaded.hosts[1].port, 2222)
+        self.assertEqual(loaded.hosts[1].password_env, "NAS_PWD")
+        self.assertEqual(loaded.display["theme"], "Panel/Gold")
+        self.assertEqual(loaded.display["rotate_interval"], 10)
+        self.assertEqual(loaded.server["port"], 7777)
+
 
 if __name__ == "__main__":
     unittest.main()
