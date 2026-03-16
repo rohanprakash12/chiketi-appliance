@@ -170,6 +170,43 @@ def set_host_source(status_fn, active_get_fn, active_set_fn, names_fn):
     _host_names_getter = names_fn
 
 
+def _get_or_generate_pubkey() -> str | None:
+    """Return the local SSH public key, generating one if none exists."""
+    import paramiko
+
+    ssh_dir = os.path.expanduser("~/.ssh")
+    ed25519_path = os.path.join(ssh_dir, "id_ed25519")
+    rsa_path = os.path.join(ssh_dir, "id_rsa")
+
+    # Check for existing keys
+    for key_path in (ed25519_path, rsa_path):
+        pub_path = key_path + ".pub"
+        if os.path.isfile(key_path) and os.path.isfile(pub_path):
+            try:
+                with open(pub_path, "r") as f:
+                    return f.read().strip()
+            except Exception:
+                continue
+
+    # Generate a new ed25519 key
+    try:
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        key = paramiko.Ed25519Key.generate()
+        key.write_private_key_file(ed25519_path)
+        os.chmod(ed25519_path, 0o600)
+
+        import socket
+        hostname = socket.gethostname()
+        username = os.environ.get("USER", "chiketi")
+        pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
+        with open(ed25519_path + ".pub", "w") as f:
+            f.write(pub_line + "\n")
+        os.chmod(ed25519_path + ".pub", 0o644)
+        return pub_line
+    except Exception:
+        return None
+
+
 def _serialize_metrics() -> dict:
     """Convert MetricValue dict to JSON-safe dict."""
     if _get_metrics is None:
@@ -469,51 +506,27 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def _handle_ssh_key_get(self) -> None:
         """GET /api/setup/ssh-key — return or generate an SSH key."""
-        import paramiko
-
         ssh_dir = os.path.expanduser("~/.ssh")
         ed25519_path = os.path.join(ssh_dir, "id_ed25519")
         rsa_path = os.path.join(ssh_dir, "id_rsa")
 
-        # Check for existing keys
-        for key_path, key_type in [(ed25519_path, "ed25519"), (rsa_path, "rsa")]:
-            pub_path = key_path + ".pub"
-            if os.path.isfile(key_path) and os.path.isfile(pub_path):
-                try:
-                    with open(pub_path, "r") as f:
-                        public_key = f.read().strip()
-                    self._json_response({
-                        "public_key": public_key,
-                        "key_path": key_path,
-                        "generated": False,
-                    })
-                    return
-                except Exception:
-                    continue
+        # Check if key already existed
+        already_existed = any(
+            os.path.isfile(p) and os.path.isfile(p + ".pub")
+            for p in (ed25519_path, rsa_path)
+        )
 
-        # Generate a new ed25519 key
-        try:
-            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-            key = paramiko.Ed25519Key.generate()
-            key.write_private_key_file(ed25519_path)
-            os.chmod(ed25519_path, 0o600)
-
-            # Write public key file
-            import socket
-            hostname = socket.gethostname()
-            username = os.environ.get("USER", "chiketi")
-            pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
-            with open(ed25519_path + ".pub", "w") as f:
-                f.write(pub_line + "\n")
-            os.chmod(ed25519_path + ".pub", 0o644)
-
+        pub_key = _get_or_generate_pubkey()
+        if pub_key:
+            # Find which key path is active
+            key_path = ed25519_path if os.path.isfile(ed25519_path) else rsa_path
             self._json_response({
-                "public_key": pub_line,
-                "key_path": ed25519_path,
-                "generated": True,
+                "public_key": pub_key,
+                "key_path": key_path,
+                "generated": not already_existed,
             })
-        except Exception as exc:
-            self._json_error(500, f"Failed to generate SSH key: {exc}")
+        else:
+            self._json_error(500, "Failed to generate SSH key")
 
     def _handle_copy_key(self) -> None:
         """POST /api/setup/copy-key — SSH in with password and copy the public key."""
@@ -537,21 +550,10 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._json_error(400, "host, user, and password are required")
             return
 
-        # Read the local public key
-        ssh_dir = os.path.expanduser("~/.ssh")
-        pub_key = None
-        for key_name in ("id_ed25519.pub", "id_rsa.pub"):
-            pub_path = os.path.join(ssh_dir, key_name)
-            if os.path.isfile(pub_path):
-                try:
-                    with open(pub_path, "r") as f:
-                        pub_key = f.read().strip()
-                    break
-                except Exception:
-                    continue
-
+        # Read or generate the local public key
+        pub_key = _get_or_generate_pubkey()
         if not pub_key:
-            self._json_error(400, "No SSH public key found. Load the SSH Key step first.")
+            self._json_error(500, "Failed to read or generate SSH key.")
             return
 
         client = paramiko.SSHClient()
