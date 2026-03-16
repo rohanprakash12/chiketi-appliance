@@ -173,38 +173,73 @@ def set_host_source(status_fn, active_get_fn, active_set_fn, names_fn):
 def _get_or_generate_pubkey() -> str | None:
     """Return the local SSH public key, generating one if none exists."""
     import paramiko
+    import logging
+    logger = logging.getLogger(__name__)
 
     ssh_dir = os.path.expanduser("~/.ssh")
     ed25519_path = os.path.join(ssh_dir, "id_ed25519")
     rsa_path = os.path.join(ssh_dir, "id_rsa")
 
-    # Check for existing keys
+    # Check for existing public key files
     for key_path in (ed25519_path, rsa_path):
         pub_path = key_path + ".pub"
-        if os.path.isfile(key_path) and os.path.isfile(pub_path):
+        if os.path.isfile(pub_path):
             try:
                 with open(pub_path, "r") as f:
-                    return f.read().strip()
-            except Exception:
+                    content = f.read().strip()
+                if content:
+                    return content
+            except Exception as exc:
+                logger.warning("Failed to read %s: %s", pub_path, exc)
                 continue
 
-    # Generate a new ed25519 key
-    try:
-        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-        key = paramiko.Ed25519Key.generate()
-        key.write_private_key_file(ed25519_path)
-        os.chmod(ed25519_path, 0o600)
+    # If private key exists but no .pub, regenerate the .pub from it
+    for key_path in (ed25519_path, rsa_path):
+        if os.path.isfile(key_path):
+            try:
+                if "ed25519" in key_path:
+                    key = paramiko.Ed25519Key.from_private_key_file(key_path)
+                else:
+                    key = paramiko.RSAKey.from_private_key_file(key_path)
+                import socket
+                hostname = socket.gethostname()
+                username = os.environ.get("USER", "chiketi")
+                pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
+                with open(key_path + ".pub", "w") as f:
+                    f.write(pub_line + "\n")
+                os.chmod(key_path + ".pub", 0o644)
+                return pub_line
+            except Exception as exc:
+                logger.warning("Failed to derive pub from %s: %s", key_path, exc)
+                continue
 
-        import socket
-        hostname = socket.gethostname()
-        username = os.environ.get("USER", "chiketi")
-        pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
-        with open(ed25519_path + ".pub", "w") as f:
-            f.write(pub_line + "\n")
-        os.chmod(ed25519_path + ".pub", 0o644)
-        return pub_line
-    except Exception:
-        return None
+    # Generate a new key
+    os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+
+    # Try ed25519 first, fall back to RSA
+    for gen_func, gen_path, gen_args in [
+        (paramiko.Ed25519Key.generate, ed25519_path, {}),
+        (paramiko.RSAKey.generate, rsa_path, {"bits": 4096}),
+    ]:
+        try:
+            key = gen_func(**gen_args)
+            key.write_private_key_file(gen_path)
+            os.chmod(gen_path, 0o600)
+
+            import socket
+            hostname = socket.gethostname()
+            username = os.environ.get("USER", "chiketi")
+            pub_line = f"{key.get_name()} {key.get_base64()} {username}@{hostname}"
+            with open(gen_path + ".pub", "w") as f:
+                f.write(pub_line + "\n")
+            os.chmod(gen_path + ".pub", 0o644)
+            logger.info("Generated SSH key at %s", gen_path)
+            return pub_line
+        except Exception as exc:
+            logger.warning("Failed to generate key at %s: %s", gen_path, exc)
+            continue
+
+    return None
 
 
 def _serialize_metrics() -> dict:
@@ -553,7 +588,9 @@ class ControlHandler(BaseHTTPRequestHandler):
         # Read or generate the local public key
         pub_key = _get_or_generate_pubkey()
         if not pub_key:
-            self._json_error(500, "Failed to read or generate SSH key.")
+            ssh_dir = os.path.expanduser("~/.ssh")
+            exists = [f for f in os.listdir(ssh_dir)] if os.path.isdir(ssh_dir) else []
+            self._json_error(500, f"Failed to read or generate SSH key. ~/.ssh contains: {exists}")
             return
 
         client = paramiko.SSHClient()
