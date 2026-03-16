@@ -261,6 +261,8 @@ def _serialize_metrics() -> dict:
 
 
 class ControlHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def do_GET(self) -> None:
         # ── Setup wizard routes ──
         if _setup_mode_flag and (self.path == "/" or self.path == "/index.html"):
@@ -1846,12 +1848,15 @@ function fetchSSHKey() {
 
 function fetchThemes() {
   if (state.themes) return;
+  console.log('[setup] fetching themes...');
   api('GET', '/api/setup/themes').then(function(data) {
+    console.log('[setup] themes loaded:', Object.keys(data.families || {}).length, 'families');
     state.themes = data;
   }).catch(function(e) {
+    console.error('[setup] themes fetch failed:', e);
     state.themes = { families: {} };
   }).then(function() {
-    if (STEPS[state.step] === 'theme') renderStep();
+    renderStep();
   });
 }
 
