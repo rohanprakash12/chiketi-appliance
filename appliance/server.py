@@ -1397,7 +1397,7 @@ code {
 (function(){
 "use strict";
 
-var STEPS = ['welcome','add-server','test','servers','theme','finish'];
+var STEPS = ['welcome','add-server','test','servers','finish'];
 var state = {
   step: 0,
   hosts: [],
@@ -1443,7 +1443,6 @@ function renderStep() {
     'add-server': renderAddServer,
     'test': renderTest,
     'servers': renderServers,
-    'theme': renderTheme,
     'finish': renderFinish,
   };
   container.innerHTML = '<div class="step active">' + renderers[stepName]() + '</div>';
@@ -1614,7 +1613,7 @@ function renderServers() {
     '<h2>Servers (' + state.hosts.length + ')</h2>' +
     '<div class="card">' + listHTML + '</div>' +
     '<button class="btn btn-secondary" id="btn-add-another" style="margin-top:0;">+ Add Another Server</button>' +
-    '<button class="btn" id="btn-to-theme" ' + (state.hosts.length === 0 ? 'disabled' : '') + '>Continue to Theme Selection</button>';
+    '<button class="btn" id="btn-to-finish" ' + (state.hosts.length === 0 ? 'disabled' : '') + '>Finish Setup</button>';
 }
 
 /* ── Step 5: Theme Picker ── */
@@ -1768,8 +1767,7 @@ function bindStep(stepName) {
         state.testPassword = '';
         goTo(1);
       });
-      on('btn-to-theme', function() {
-        fetchThemes();
+      on('btn-to-finish', function() {
         goTo(4);
       });
       $$('[data-remove]').forEach(function(btn) {
@@ -1790,7 +1788,7 @@ function bindStep(stepName) {
 
     case 'finish':
       on('btn-finish', doFinish);
-      on('btn-finish-back', function() { goTo(4); });
+      on('btn-finish-back', function() { goTo(3); });
       break;
   }
 }
