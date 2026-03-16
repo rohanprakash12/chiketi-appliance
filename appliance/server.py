@@ -1355,7 +1355,7 @@ code {
 (function(){
 "use strict";
 
-var STEPS = ['welcome','add-server','ssh-key','test','servers','theme','finish'];
+var STEPS = ['welcome','add-server','test','servers','theme','finish'];
 var state = {
   step: 0,
   hosts: [],
@@ -1399,7 +1399,6 @@ function renderStep() {
   var renderers = {
     'welcome': renderWelcome,
     'add-server': renderAddServer,
-    'ssh-key': renderSSHKey,
     'test': renderTest,
     'servers': renderServers,
     'theme': renderTheme,
@@ -1448,8 +1447,11 @@ function renderAddServer() {
           '<input type="number" id="srv-port" value="' + h.port + '" min="1" max="65535">' +
         '</div>' +
       '</div>' +
+      '<label for="srv-password" style="margin-top:0.85rem;">SSH Password</label>' +
+      '<input type="password" id="srv-password" placeholder="Server password (used once to set up key)" value="' + esc(state.testPassword) + '">' +
+      '<p class="hint" style="margin-top:0.25rem;">The password is used once to copy the SSH key. It is never stored.</p>' +
     '</div>' +
-    '<button class="btn" id="btn-to-ssh" ' + (filled ? '' : 'disabled') + '>Next</button>' +
+    '<button class="btn" id="btn-to-test" ' + (filled ? '' : 'disabled') + '>Connect</button>' +
     (state.hosts.length > 0 ? '<button class="btn btn-secondary" id="btn-add-cancel" style="margin-top:0.5rem;">Cancel</button>' : '');
 }
 
@@ -1501,13 +1503,14 @@ function renderSSHKey() {
     '</div>';
 }
 
-/* ── Step 3: Test Connection ── */
+/* ── Step 2: Test Connection ── */
 function renderTest() {
   var statusHTML = '';
+  var phase = state.testPhase || '';
   if (state.testResult === null) {
-    statusHTML = '<p class="status-msg" style="color:var(--text-dim);">Press the button to verify the connection.</p>';
+    statusHTML = '<div class="status-msg"><div class="spinner"></div><br>' + (phase || 'Setting up connection...') + '</div>';
   } else if (state.testResult === 'loading') {
-    statusHTML = '<div class="status-msg"><div class="spinner"></div><br>Connecting to ' + esc(state.currentHost.host) + '...</div>';
+    statusHTML = '<div class="status-msg"><div class="spinner"></div><br>' + (phase || 'Connecting...') + '</div>';
   } else if (state.testResult.success) {
     statusHTML = '' +
       '<div class="status-msg success">' +
@@ -1526,18 +1529,17 @@ function renderTest() {
         '<span style="font-size:0.82rem;display:inline-block;margin-top:0.35rem;">' + esc(state.testResult.error) + '</span>' +
       '</div>';
   }
-  var isLoading = state.testResult === 'loading';
+  var isLoading = state.testResult === null || state.testResult === 'loading';
   var canProceed = state.testResult && state.testResult !== 'loading' && state.testResult.success;
-  var testBtnLabel = state.testResult && state.testResult !== 'loading' && !state.testResult.success ? 'Try Again' : 'Test Connection';
   return '' +
-    '<h2>Test Connection</h2>' +
+    '<h2>Connecting</h2>' +
     '<div class="card">' +
       '<p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">' +
         'Server: <strong style="color:var(--text);">' + esc(state.currentHost.name) + '</strong> &mdash; ' +
         '<span style="color:var(--text-muted);">' + esc(state.currentHost.user) + '@' + esc(state.currentHost.host) + ':' + state.currentHost.port + '</span>' +
       '</p>' +
       statusHTML +
-      '<button class="btn' + (canProceed ? ' btn-secondary' : '') + '" id="btn-test" ' + (isLoading ? 'disabled' : '') + '>' + testBtnLabel + '</button>' +
+      ((!isLoading && !canProceed) ? '<button class="btn" id="btn-test">Retry</button>' : '') +
     '</div>' +
     '<div class="btn-row">' +
       '<button class="btn btn-secondary" id="btn-test-back">Back</button>' +
@@ -1691,66 +1693,29 @@ function bindStep(stepName) {
       if (userEl) userEl.addEventListener('input', checkFields);
       if (portEl) portEl.addEventListener('input', checkFields);
 
-      on('btn-to-ssh', function() {
+      on('btn-to-test', function() {
         var name = val('srv-name'), host = val('srv-host'), user = val('srv-user');
         var port = parseInt($('#srv-port').value, 10) || 22;
+        var pw = val('srv-password');
         if (!name || !host || !user) return;
         state.currentHost = { name:name, host:host, user:user, port:port };
+        state.testPassword = pw;
         state.testResult = null;
-        fetchSSHKey();
+        state.testPhase = '';
         goTo(2);
+        setTimeout(function() { doFullConnect(); }, 100);
       });
-      on('btn-add-cancel', function() { goTo(4); });
-      break;
-
-    case 'ssh-key':
-      if (state.sshKey) {
-        on('btn-copy-key', function() { copyText('pubkey-area', 'btn-copy-key'); });
-        on('btn-copy-cmd', function() { copyText('cmd-area', 'btn-copy-cmd'); });
-      }
-      on('btn-key-done', function() {
-        var pw = document.getElementById('ssh-password');
-        state.testPassword = pw ? pw.value : '';
-        goTo(3);
-      });
-      on('btn-expand-pw', function() {
-        var toggle = document.getElementById('btn-expand-pw');
-        var section = document.getElementById('pw-section');
-        if (toggle && section) {
-          toggle.classList.toggle('open');
-          section.classList.toggle('open');
-        }
-      });
-      on('btn-auto-copy', function() {
-        var pw = document.getElementById('ssh-password');
-        state.testPassword = pw ? pw.value : '';
-        if (!state.testPassword) { alert('Please enter the server password.'); return; }
-        var btn = document.getElementById('btn-auto-copy');
-        if (btn) { btn.disabled = true; btn.textContent = 'Copying key...'; }
-        api('POST', '/api/setup/copy-key', {
-          host: state.currentHost.host,
-          user: state.currentHost.user,
-          port: state.currentHost.port,
-          password: state.testPassword
-        }).then(function(data) {
-          if (data.success) {
-            state.testPassword = '';
-            goTo(3);
-            setTimeout(function() { doTest(); }, 100);
-          } else {
-            alert('Failed to copy key: ' + (data.error || 'Unknown error'));
-            if (btn) { btn.disabled = false; btn.textContent = 'Copy Key Automatically'; }
-          }
-        }).catch(function(e) {
-          alert('Error: ' + e.message);
-          if (btn) { btn.disabled = false; btn.textContent = 'Copy Key Automatically'; }
-        });
-      });
+      on('btn-add-cancel', function() { goTo(3); });
       break;
 
     case 'test':
-      on('btn-test', doTest);
-      on('btn-test-back', function() { goTo(2); });
+      on('btn-test', function() {
+        state.testResult = null;
+        state.testPhase = '';
+        renderStep();
+        setTimeout(function() { doFullConnect(); }, 100);
+      });
+      on('btn-test-back', function() { goTo(1); });
       on('btn-test-next', function() { addHost(); });
       break;
 
@@ -1763,7 +1728,7 @@ function bindStep(stepName) {
       });
       on('btn-to-theme', function() {
         fetchThemes();
-        goTo(5);
+        goTo(4);
       });
       $$('[data-remove]').forEach(function(btn) {
         btn.addEventListener('click', function() { removeHost(btn.dataset.remove); });
@@ -1777,13 +1742,13 @@ function bindStep(stepName) {
           renderStep();
         });
       });
-      on('btn-theme-back', function() { goTo(4); });
-      on('btn-to-finish', function() { goTo(6); });
+      on('btn-theme-back', function() { goTo(3); });
+      on('btn-to-finish', function() { goTo(5); });
       break;
 
     case 'finish':
       on('btn-finish', doFinish);
-      on('btn-finish-back', function() { goTo(5); });
+      on('btn-finish-back', function() { goTo(4); });
       break;
   }
 }
@@ -1851,20 +1816,51 @@ function fetchThemes() {
   });
 }
 
-function doTest() {
+function doFullConnect() {
+  var h = state.currentHost;
+  var pw = state.testPassword;
+
+  /* Step 1: If password provided, copy SSH key first */
+  if (pw) {
+    state.testPhase = 'Copying SSH key to ' + h.host + '...';
+    state.testResult = 'loading';
+    renderStep();
+
+    api('POST', '/api/setup/copy-key', {
+      host: h.host, user: h.user, port: h.port, password: pw
+    }).then(function(data) {
+      if (!data.success) {
+        state.testResult = { success: false, error: 'Key copy failed: ' + (data.error || 'Unknown error') };
+        renderStep();
+        return;
+      }
+      state.testPassword = '';
+      /* Step 2: Test with key (no password) */
+      doTestConnection();
+    }).catch(function(e) {
+      state.testResult = { success: false, error: 'Key copy error: ' + e.message };
+      renderStep();
+    });
+  } else {
+    /* No password — try key-based auth directly */
+    doTestConnection();
+  }
+}
+
+function doTestConnection() {
+  var h = state.currentHost;
+  state.testPhase = 'Testing connection to ' + h.host + '...';
   state.testResult = 'loading';
   renderStep();
-  var body = {
-    host: state.currentHost.host,
-    user: state.currentHost.user,
-    port: state.currentHost.port,
-  };
-  if (state.testPassword) body.password = state.testPassword;
-  api('POST', '/api/setup/test-connection', body).then(function(data) {
+
+  api('POST', '/api/setup/test-connection', {
+    host: h.host, user: h.user, port: h.port
+  }).then(function(data) {
     state.testResult = data;
   }).catch(function(e) {
     state.testResult = { success: false, error: e.message };
   }).then(function() {
+    state.testPhase = '';
     renderStep();
   });
 }
