@@ -280,7 +280,6 @@ class ControlHandler(BaseHTTPRequestHandler):
             body = html.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Security-Policy", self._CSP)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -506,14 +505,12 @@ class ControlHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    _CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src *; font-src 'self'; img-src 'self' data:"
 
     def _serve_ui(self) -> None:
         html = _build_html()
         body = html.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Security-Policy", self._CSP)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -523,7 +520,6 @@ class ControlHandler(BaseHTTPRequestHandler):
         body = html.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Security-Policy", self._CSP)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
