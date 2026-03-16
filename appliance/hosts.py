@@ -85,12 +85,20 @@ def load_config(path: str) -> ApplianceConfig:
         if key_path:
             key_path = str(Path(key_path).expanduser())
 
+        port = h.get("port", 22)
+        try:
+            port = int(port)
+        except (ValueError, TypeError):
+            raise ValueError(f"Host '{h['name']}': port must be an integer, got {port!r}")
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Host '{h['name']}': port must be 1-65535, got {port}")
+
         hosts.append(
             HostConfig(
                 name=h["name"],
                 host=h["host"],
                 user=h["user"],
-                port=h.get("port", 22),
+                port=port,
                 key_path=key_path,
                 password_env=h.get("password_env"),
             )

@@ -73,29 +73,29 @@ class MetricEngine(threading.Thread):
 
     def get_host_status(self) -> list[dict]:
         """Return list of {name, online, latency_ms} for every configured host."""
-        result = []
-        for c in self._collectors:
-            result.append({
-                "name": c.name,
-                "online": c.online,
-                "latency_ms": c.latency_ms,
-            })
-        return result
+        with self._lock:
+            collectors = list(self._collectors)
+        return [
+            {"name": c.name, "online": c.online, "latency_ms": c.latency_ms}
+            for c in collectors
+        ]
 
     def get_active_host(self) -> str:
         return self._active_host
 
     def set_active_host(self, name: str) -> bool:
         """Set the active host. Returns True if the host exists."""
-        for c in self._collectors:
-            if c.name == name:
-                self._active_host = name
-                return True
+        with self._lock:
+            for c in self._collectors:
+                if c.name == name:
+                    self._active_host = name
+                    return True
         return False
 
     def get_host_names(self) -> list[str]:
         """Return all configured host names in order."""
-        return [c.name for c in self._collectors]
+        with self._lock:
+            return [c.name for c in self._collectors]
 
     def add_host(self, host_config: HostConfig) -> bool:
         """Add a new host at runtime. Creates collector, connects, adds to collection loop."""

@@ -23,6 +23,8 @@ def _parse_host_string(host_str: str) -> tuple[str, str, int]:
             port = int(port_str)
         except ValueError:
             raise ValueError(f"Invalid port number in {host_str!r}: {port_str!r}")
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Port out of range in {host_str!r}: {port} (must be 1-65535)")
     else:
         host = rest
         port = 22
