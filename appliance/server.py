@@ -7,6 +7,12 @@ import os
 import subprocess
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer
+except ImportError:
+    import socketserver
+    class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+        daemon_threads = True
 
 from appliance.config import TIMING
 from appliance.themes import (
@@ -152,6 +158,7 @@ _active_host_getter = None   # callable that returns active host name
 _active_host_setter = None   # callable to set active host
 _host_names_getter = None    # callable that returns list of host names
 _host_rotate_interval = 0    # 0 = disabled; >0 = seconds between host auto-rotation
+_default_screen_duration = 10  # default seconds per screen rotation; overridden by config display.rotate_interval
 
 
 def set_host_source(status_fn, active_get_fn, active_set_fn, names_fn):
@@ -527,9 +534,17 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._json_error(400, "Invalid JSON body")
             return
 
-        host = body.get("host", "").strip()
-        user = body.get("user", "").strip()
-        port = int(body.get("port", 22))
+        host = body.get("host", "")
+        user = body.get("user", "")
+        if not isinstance(host, str) or not isinstance(user, str):
+            self._json_error(400, "host and user must be strings")
+            return
+        host = host.strip()
+        user = user.strip()
+        try:
+            port = int(body.get("port", 22))
+        except (ValueError, TypeError):
+            port = 22
         password = body.get("password")
 
         if not host or not user:
@@ -608,10 +623,19 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._json_error(400, "Invalid JSON body")
             return
 
-        name = body.get("name", "").strip()
-        host = body.get("host", "").strip()
-        user = body.get("user", "").strip()
-        port = int(body.get("port", 22))
+        name = body.get("name", "")
+        host = body.get("host", "")
+        user = body.get("user", "")
+        if not isinstance(name, str) or not isinstance(host, str) or not isinstance(user, str):
+            self._json_error(400, "name, host, and user must be strings")
+            return
+        name = name.strip()
+        host = host.strip()
+        user = user.strip()
+        try:
+            port = int(body.get("port", 22))
+        except (ValueError, TypeError):
+            port = 22
 
         if not name:
             self._json_error(400, "name is required")
@@ -736,35 +760,20 @@ def _build_setup_html() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>chiketi-appliance — Setup</title>
+<title>Chiketi Appliance — Setup</title>
 <style>
-@font-face {
-  font-family: 'Chakra Petch';
-  src: url('/assets/fonts/ChakraPetch-Regular.ttf') format('truetype');
-  font-weight: 400;
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  src: url('/assets/fonts/ChakraPetch-Bold.ttf') format('truetype');
-  font-weight: 700;
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  src: url('/assets/fonts/ChakraPetch-Light.ttf') format('truetype');
-  font-weight: 300;
-}
-
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
   --bg: #0a0a0a;
-  --surface: #141414;
+  --surface: #111111;
   --surface2: #1a1a1a;
-  --border: #2a2a2a;
+  --border: #333;
   --green: #00ff41;
   --green-dim: #00cc33;
   --green-glow: rgba(0,255,65,0.15);
-  --red: #ff3333;
+  --green-soft: rgba(0,255,65,0.08);
+  --red: #ff4444;
   --yellow: #ffcc00;
   --text: #e0e0e0;
   --text-dim: #888;
@@ -773,70 +782,82 @@ def _build_setup_html() -> str:
 }
 
 body {
-  font-family: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  font-family: -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
   display: flex;
   justify-content: center;
-  padding: 1.5rem;
+  padding: 1.25rem 1rem;
   -webkit-font-smoothing: antialiased;
 }
 
 .wizard {
   width: 100%;
-  max-width: 500px;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
-/* ── Progress dots ── */
+/* ── Progress indicator ── */
 .progress {
   display: flex;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 1rem 0 0.5rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1rem 0 0.25rem;
 }
 .dot {
   width: 10px; height: 10px;
   border-radius: 50%;
   background: var(--border);
-  transition: background 0.3s, box-shadow 0.3s;
+  transition: all 0.35s ease;
+  flex-shrink: 0;
+}
+.dot-line {
+  width: 18px; height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.35s ease;
+  flex-shrink: 0;
 }
 .dot.active {
   background: var(--green);
-  box-shadow: 0 0 8px var(--green-glow);
+  box-shadow: 0 0 10px var(--green-glow), 0 0 4px var(--green-glow);
 }
-.dot.done {
-  background: var(--green-dim);
-}
+.dot.done { background: var(--green-dim); }
+.dot-line.done { background: var(--green-dim); }
 
 /* ── Step container ── */
-.step { display: none; animation: fadeIn 0.3s ease; }
+.step { display: none; animation: fadeIn 0.35s ease; }
 .step.active { display: block; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* ── Cards ── */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.5rem;
-  margin-bottom: 1rem;
+  padding: 1.25rem;
+  margin-bottom: 0.75rem;
 }
 
 /* ── Typography ── */
 h1 {
-  font-size: 1.6rem;
+  font-size: 1.8rem;
   font-weight: 700;
   color: var(--green);
   text-align: center;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
+  text-shadow: 0 0 30px var(--green-glow);
 }
 h2 {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: var(--text);
   margin-bottom: 0.75rem;
@@ -844,20 +865,27 @@ h2 {
 .subtitle {
   text-align: center;
   color: var(--text-dim);
-  font-size: 0.9rem;
-  line-height: 1.5;
+  font-size: 0.92rem;
+  line-height: 1.6;
   margin-top: 0.5rem;
+}
+.desc {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin-top: 0.75rem;
 }
 
 /* ── Form elements ── */
 label {
   display: block;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.3rem;
-  margin-top: 0.75rem;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.35rem;
+  margin-top: 0.85rem;
 }
 label:first-child { margin-top: 0; }
 
@@ -866,25 +894,34 @@ input[type="number"],
 input[type="password"],
 textarea {
   width: 100%;
-  padding: 0.6rem 0.75rem;
-  background: var(--bg);
+  padding: 0.65rem 0.8rem;
+  background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--text);
   font-family: inherit;
   font-size: 0.95rem;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 input:focus, textarea:focus {
   border-color: var(--green);
+  box-shadow: 0 0 0 2px var(--green-soft);
 }
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
 textarea {
   resize: none;
-  font-family: 'Courier New', monospace;
-  font-size: 0.8rem;
-  line-height: 1.4;
+  font-family: 'SFMono-Regular', 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
+
+.field-row {
+  display: flex;
+  gap: 0.75rem;
+}
+.field-row .field-col { flex: 1; }
+.field-row .field-col-sm { width: 90px; flex-shrink: 0; }
 
 /* ── Buttons ── */
 .btn {
@@ -892,38 +929,41 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.7rem 1.5rem;
+  padding: 0.75rem 1.5rem;
   border: 1px solid var(--green);
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--green);
   font-family: inherit;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s, transform 0.1s;
   width: 100%;
-  margin-top: 1rem;
+  margin-top: 0.75rem;
 }
 .btn:hover {
   background: var(--green);
   color: var(--bg);
-  box-shadow: 0 0 16px var(--green-glow);
+  box-shadow: 0 0 20px var(--green-glow);
 }
+.btn:active { transform: scale(0.98); }
 .btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: not-allowed;
+  pointer-events: none;
 }
-.btn:disabled:hover {
-  background: transparent;
-  color: var(--green);
-  box-shadow: none;
+.btn-big {
+  font-size: 1rem;
+  padding: 0.9rem 2rem;
+  margin-top: 1.5rem;
+  letter-spacing: 0.1em;
 }
 .btn-sm {
-  padding: 0.45rem 1rem;
-  font-size: 0.8rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.75rem;
   width: auto;
   margin-top: 0;
 }
@@ -934,7 +974,7 @@ textarea {
 .btn-danger:hover {
   background: var(--red);
   color: #fff;
-  box-shadow: 0 0 16px rgba(255,51,51,0.2);
+  box-shadow: 0 0 16px rgba(255,68,68,0.2);
 }
 .btn-secondary {
   border-color: var(--border);
@@ -948,14 +988,14 @@ textarea {
 .btn-row {
   display: flex;
   gap: 0.75rem;
-  margin-top: 1rem;
+  margin-top: 0.75rem;
 }
 .btn-row .btn { flex: 1; }
 
 /* ── Status indicators ── */
 .spinner {
   display: inline-block;
-  width: 20px; height: 20px;
+  width: 22px; height: 22px;
   border: 2px solid var(--border);
   border-top-color: var(--green);
   border-radius: 50%;
@@ -972,67 +1012,156 @@ textarea {
 .status-msg.success { color: var(--green); }
 .status-msg.error { color: var(--red); }
 
+/* success checkmark animation */
+@keyframes checkPop {
+  0% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.check-anim {
+  display: inline-block;
+  font-size: 2.5rem;
+  animation: checkPop 0.4s ease forwards;
+}
+@keyframes xPop {
+  0% { transform: scale(0) rotate(-15deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.x-anim {
+  display: inline-block;
+  font-size: 2.5rem;
+  animation: xPop 0.3s ease forwards;
+}
+
 /* ── Host list ── */
 .host-list { list-style: none; }
 .host-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   margin-bottom: 0.5rem;
 }
-.host-item .host-info { flex: 1; }
-.host-item .host-name { font-weight: 700; color: var(--green); }
-.host-item .host-addr { font-size: 0.8rem; color: var(--text-dim); }
+.host-item:last-child { margin-bottom: 0; }
+.host-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green-glow);
+  flex-shrink: 0;
+}
+.host-info { flex: 1; min-width: 0; }
+.host-name { font-weight: 700; color: var(--green); font-size: 0.95rem; }
+.host-addr { font-size: 0.78rem; color: var(--text-dim); margin-top: 0.1rem; }
 
 /* ── Copyable area ── */
-.copy-wrap {
-  position: relative;
-}
+.copy-wrap { position: relative; }
 .copy-btn {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  padding: 0.25rem 0.5rem;
+  top: 6px; right: 6px;
+  padding: 0.25rem 0.6rem;
   font-size: 0.7rem;
+  font-weight: 600;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--text-dim);
   cursor: pointer;
   font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.15s;
 }
 .copy-btn:hover { color: var(--green); border-color: var(--green); }
+.copy-btn.copied { color: var(--green); border-color: var(--green); }
+
+/* ── Expandable section ── */
+.expand-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0.5rem 0 0.25rem;
+  transition: color 0.2s;
+}
+.expand-toggle:hover { color: var(--text); }
+.expand-toggle .arrow {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.7rem;
+}
+.expand-toggle.open .arrow { transform: rotate(90deg); }
+.expand-content {
+  display: none;
+  padding-top: 0.5rem;
+}
+.expand-content.open { display: block; animation: fadeIn 0.2s ease; }
 
 /* ── Theme picker ── */
-.theme-families { display: flex; flex-direction: column; gap: 1rem; }
+.theme-families { display: flex; flex-direction: column; gap: 1.25rem; }
 .theme-family-name {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.4rem;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.5rem;
 }
 .theme-swatches {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 .swatch {
-  width: 42px; height: 42px;
-  border-radius: 4px;
+  width: 56px; height: 40px;
+  border-radius: 5px;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: border-color 0.2s, transform 0.15s;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
   position: relative;
+  overflow: hidden;
 }
-.swatch:hover { transform: scale(1.1); }
+.swatch:hover { transform: scale(1.08); }
 .swatch.selected {
   border-color: var(--green);
-  box-shadow: 0 0 10px var(--green-glow);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+.swatch-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+.swatch-bg {
+  flex: 1;
+}
+.swatch-accent {
+  width: 8px;
+}
+.swatch-label {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+.swatch.selected .swatch-label { color: var(--green); }
+.swatch-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 18px;
 }
 .swatch-tooltip {
   display: none;
@@ -1048,36 +1177,62 @@ textarea {
   color: var(--text);
   white-space: nowrap;
   z-index: 10;
+  pointer-events: none;
 }
 .swatch:hover .swatch-tooltip { display: block; }
 
 /* ── Finish summary ── */
+.summary-text {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
 .summary-row {
   display: flex;
   justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.95rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.92rem;
 }
 .summary-row:last-child { border-bottom: none; }
 .summary-label { color: var(--text-dim); }
-.summary-value { color: var(--green); font-weight: 700; }
+.summary-value { color: var(--green); font-weight: 600; }
 
 /* ── Connecting overlay ── */
 .overlay {
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.85);
+  background: rgba(0,0,0,0.9);
   z-index: 100;
   justify-content: center;
   align-items: center;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 .overlay.show { display: flex; }
-.overlay .spinner { width: 40px; height: 40px; border-width: 3px; }
-.overlay p { color: var(--green); font-size: 1.1rem; letter-spacing: 0.05em; }
+.overlay .spinner { width: 44px; height: 44px; border-width: 3px; }
+.overlay p { color: var(--green); font-size: 1.1rem; letter-spacing: 0.06em; }
+
+/* ── Misc ── */
+code {
+  font-family: 'SFMono-Regular', 'Consolas', 'Courier New', monospace;
+  color: var(--green);
+  font-size: 0.88em;
+}
+.note {
+  font-size: 0.8rem;
+  color: var(--yellow);
+  margin-top: 0.5rem;
+}
+.hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+  line-height: 1.4;
+}
 </style>
 </head>
 <body>
@@ -1087,15 +1242,15 @@ textarea {
 </div>
 <div class="overlay" id="overlay">
   <div class="spinner"></div>
-  <p id="overlay-msg">Connecting to servers...</p>
+  <p id="overlay-msg">Saving configuration...</p>
 </div>
 
 <script>
 (function(){
 "use strict";
 
-const STEPS = ['welcome','add-server','ssh-key','test','servers','theme','finish'];
-let state = {
+var STEPS = ['welcome','add-server','ssh-key','test','servers','theme','finish'];
+var state = {
   step: 0,
   hosts: [],
   currentHost: { name:'', host:'', user:'', port:22 },
@@ -1109,15 +1264,20 @@ let state = {
 function $(sel, ctx) { return (ctx||document).querySelector(sel); }
 function $$(sel, ctx) { return Array.from((ctx||document).querySelectorAll(sel)); }
 
-/* ── Progress dots ── */
+/* ── Progress dots with connecting lines ── */
 function renderProgress() {
-  const el = document.getElementById('progress');
-  el.innerHTML = STEPS.map((_,i) => {
-    let cls = 'dot';
+  var el = document.getElementById('progress');
+  var html = '';
+  for (var i = 0; i < STEPS.length; i++) {
+    var cls = 'dot';
     if (i < state.step) cls += ' done';
     if (i === state.step) cls += ' active';
-    return `<div class="${cls}"></div>`;
-  }).join('');
+    html += '<div class="' + cls + '"></div>';
+    if (i < STEPS.length - 1) {
+      html += '<div class="dot-line' + (i < state.step ? ' done' : '') + '"></div>';
+    }
+  }
+  el.innerHTML = html;
 }
 
 /* ── Step rendering ── */
@@ -1128,9 +1288,9 @@ function goTo(n) {
 }
 
 function renderStep() {
-  const container = document.getElementById('steps');
-  const stepName = STEPS[state.step];
-  const renderers = {
+  var container = document.getElementById('steps');
+  var stepName = STEPS[state.step];
+  var renderers = {
     'welcome': renderWelcome,
     'add-server': renderAddServer,
     'ssh-key': renderSSHKey,
@@ -1139,416 +1299,498 @@ function renderStep() {
     'theme': renderTheme,
     'finish': renderFinish,
   };
-  container.innerHTML = `<div class="step active">${renderers[stepName]()}</div>`;
+  container.innerHTML = '<div class="step active">' + renderers[stepName]() + '</div>';
   bindStep(stepName);
 }
 
 /* ── Step 0: Welcome ── */
 function renderWelcome() {
-  return `
-    <div style="padding:2rem 0;text-align:center;">
-      <h1>CHIKETI<br>APPLIANCE</h1>
-      <p class="subtitle" style="margin-top:1.5rem;">
-        Remote system monitoring dashboard.<br>
-        Monitor your Linux servers from a Raspberry Pi.
-      </p>
-      <p class="subtitle" style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
-        This wizard will help you connect to your servers<br>
-        and configure the dashboard.
-      </p>
-      <button class="btn" id="btn-start" style="margin-top:2rem;">Get Started</button>
-    </div>`;
+  return '' +
+    '<div style="padding:2.5rem 0;text-align:center;">' +
+      '<h1>CHIKETI<br>APPLIANCE</h1>' +
+      '<p class="subtitle" style="margin-top:1rem;font-size:0.95rem;color:var(--text-dim);">Remote System Monitor</p>' +
+      '<p class="subtitle" style="margin-top:1.5rem;">' +
+        'Monitor your Linux servers from a single dashboard.<br>' +
+        'No software needed on your servers &mdash; just SSH access.' +
+      '</p>' +
+      '<p class="desc">' +
+        'This wizard will connect to your servers, set up SSH keys,<br>' +
+        'and configure the dashboard theme.' +
+      '</p>' +
+      '<button class="btn btn-big" id="btn-start">Get Started</button>' +
+    '</div>';
 }
 
 /* ── Step 1: Add Server ── */
 function renderAddServer() {
-  const h = state.currentHost;
-  return `
-    <h2>Add Server</h2>
-    <div class="card">
-      <label for="srv-name">Display Name</label>
-      <input type="text" id="srv-name" placeholder="e.g. gpu-server" value="${esc(h.name)}">
-      <label for="srv-host">Host / IP Address</label>
-      <input type="text" id="srv-host" placeholder="e.g. 192.168.1.50" value="${esc(h.host)}">
-      <label for="srv-user">Username</label>
-      <input type="text" id="srv-user" placeholder="e.g. rohan" value="${esc(h.user)}">
-      <label for="srv-port">SSH Port</label>
-      <input type="number" id="srv-port" value="${h.port}" min="1" max="65535">
-    </div>
-    <button class="btn" id="btn-to-ssh">Next</button>`;
+  var h = state.currentHost;
+  var filled = h.name && h.host && h.user;
+  return '' +
+    '<h2>Add Server</h2>' +
+    '<div class="card">' +
+      '<label for="srv-name">Friendly Name</label>' +
+      '<input type="text" id="srv-name" placeholder="my-server" value="' + esc(h.name) + '">' +
+      '<label for="srv-host">Host / IP Address</label>' +
+      '<input type="text" id="srv-host" placeholder="192.168.1.50" value="' + esc(h.host) + '">' +
+      '<div class="field-row" style="margin-top:0.85rem;">' +
+        '<div class="field-col">' +
+          '<label for="srv-user" style="margin-top:0;">Username</label>' +
+          '<input type="text" id="srv-user" placeholder="rohan" value="' + esc(h.user) + '">' +
+        '</div>' +
+        '<div class="field-col-sm">' +
+          '<label for="srv-port" style="margin-top:0;">Port</label>' +
+          '<input type="number" id="srv-port" value="' + h.port + '" min="1" max="65535">' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn" id="btn-to-ssh" ' + (filled ? '' : 'disabled') + '>Next</button>' +
+    (state.hosts.length > 0 ? '<button class="btn btn-secondary" id="btn-add-cancel" style="margin-top:0.5rem;">Cancel</button>' : '');
 }
 
 /* ── Step 2: SSH Key ── */
 function renderSSHKey() {
   if (!state.sshKey) {
-    return `
-      <h2>SSH Key</h2>
-      <div class="card">
-        <div class="status-msg"><div class="spinner"></div><br>Loading SSH key...</div>
-      </div>`;
+    return '' +
+      '<h2>SSH Key</h2>' +
+      '<div class="card">' +
+        '<div class="status-msg"><div class="spinner"></div><br>Loading SSH key...</div>' +
+      '</div>';
   }
-  const k = state.sshKey;
-  const genNote = k.generated
-    ? `<p style="color:var(--yellow);font-size:0.8rem;margin-top:0.5rem;">A new key was generated at ${esc(k.key_path)}</p>`
+  var k = state.sshKey;
+  var genNote = k.generated
+    ? '<p class="note">A new SSH key was generated for this appliance at <code>' + esc(k.key_path) + '</code></p>'
     : '';
-  return `
-    <h2>SSH Key</h2>
-    <div class="card">
-      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">
-        Add this public key to your server's <code style="color:var(--green);">~/.ssh/authorized_keys</code>:
-      </p>
-      <div class="copy-wrap">
-        <textarea id="pubkey-area" rows="3" readonly>${esc(k.public_key)}</textarea>
-        <button class="copy-btn" id="btn-copy-key">COPY</button>
-      </div>
-      ${genNote}
-      <p style="font-size:0.8rem;color:var(--text-dim);margin-top:1rem;">One-liner to add the key on the server:</p>
-      <div class="copy-wrap" style="margin-top:0.3rem;">
-        <textarea id="cmd-area" rows="2" readonly>echo '${esc(k.public_key)}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys</textarea>
-        <button class="copy-btn" id="btn-copy-cmd">COPY</button>
-      </div>
-    </div>
-    <div class="card">
-      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.5rem;">
-        Or enter the server password to connect (key-based auth will be tried first):
-      </p>
-      <label for="ssh-password">Password (optional)</label>
-      <input type="password" id="ssh-password" placeholder="Leave blank to use key only" value="${esc(state.testPassword)}">
-    </div>
-    <button class="btn" id="btn-to-test">Next</button>`;
+  var cmdText = "echo '" + k.public_key + "' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys";
+  return '' +
+    '<h2>SSH Key</h2>' +
+    '<div class="card">' +
+      '<p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">' +
+        'Add this key to your server\'s <code>~/.ssh/authorized_keys</code>:' +
+      '</p>' +
+      '<div class="copy-wrap">' +
+        '<textarea id="pubkey-area" rows="3" readonly>' + esc(k.public_key) + '</textarea>' +
+        '<button class="copy-btn" id="btn-copy-key">COPY</button>' +
+      '</div>' +
+      genNote +
+      '<p style="font-size:0.82rem;color:var(--text-dim);margin-top:1rem;">Run this on your server:</p>' +
+      '<div class="copy-wrap" style="margin-top:0.3rem;">' +
+        '<textarea id="cmd-area" rows="2" readonly>' + esc(cmdText) + '</textarea>' +
+        '<button class="copy-btn" id="btn-copy-cmd">COPY</button>' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn" id="btn-key-done">I\'ve Added the Key</button>' +
+    '<div class="card" style="margin-top:0.75rem;">' +
+      '<button class="expand-toggle" id="btn-expand-pw">' +
+        '<span class="arrow">&#9654;</span>' +
+        'Or enter password for one-time key setup' +
+      '</button>' +
+      '<div class="expand-content" id="pw-section">' +
+        '<p class="hint" style="margin-top:0.25rem;margin-bottom:0.5rem;">' +
+          'Enter the server password to automatically copy the key via SSH. The password is not stored.' +
+        '</p>' +
+        '<label for="ssh-password" style="margin-top:0;">Server Password</label>' +
+        '<input type="password" id="ssh-password" placeholder="Enter server password" value="' + esc(state.testPassword) + '">' +
+        '<button class="btn btn-sm" id="btn-auto-copy" style="margin-top:0.6rem;width:100%;">Copy Key Automatically</button>' +
+      '</div>' +
+    '</div>';
 }
 
 /* ── Step 3: Test Connection ── */
 function renderTest() {
-  let statusHTML = '';
+  var statusHTML = '';
   if (state.testResult === null) {
-    statusHTML = `<p class="status-msg" style="color:var(--text-dim);">Press the button to verify the connection.</p>`;
+    statusHTML = '<p class="status-msg" style="color:var(--text-dim);">Press the button to verify the connection.</p>';
   } else if (state.testResult === 'loading') {
-    statusHTML = `<div class="status-msg"><div class="spinner"></div><br>Connecting to ${esc(state.currentHost.host)}...</div>`;
+    statusHTML = '<div class="status-msg"><div class="spinner"></div><br>Connecting to ' + esc(state.currentHost.host) + '...</div>';
   } else if (state.testResult.success) {
-    statusHTML = `
-      <div class="status-msg success">
-        <span style="font-size:2rem;">&#10003;</span><br>
-        Connected successfully!<br>
-        <span style="font-size:0.85rem;color:var(--text-dim);">
-          Hostname: <strong style="color:var(--green);">${esc(state.testResult.hostname)}</strong><br>
-          Uptime: ${esc(state.testResult.uptime || 'N/A')}
-        </span>
-      </div>`;
+    statusHTML = '' +
+      '<div class="status-msg success">' +
+        '<span class="check-anim">&#10003;</span><br>' +
+        'Connected successfully!<br>' +
+        '<span style="font-size:0.85rem;color:var(--text-dim);display:inline-block;margin-top:0.5rem;">' +
+          'Hostname: <strong style="color:var(--green);">' + esc(state.testResult.hostname) + '</strong><br>' +
+          'Uptime: ' + esc(state.testResult.uptime || 'N/A') +
+        '</span>' +
+      '</div>';
   } else {
-    statusHTML = `
-      <div class="status-msg error">
-        <span style="font-size:2rem;">&#10007;</span><br>
-        Connection failed<br>
-        <span style="font-size:0.85rem;">${esc(state.testResult.error)}</span>
-      </div>`;
+    statusHTML = '' +
+      '<div class="status-msg error">' +
+        '<span class="x-anim">&#10007;</span><br>' +
+        'Connection failed<br>' +
+        '<span style="font-size:0.82rem;display:inline-block;margin-top:0.35rem;">' + esc(state.testResult.error) + '</span>' +
+      '</div>';
   }
-  const canProceed = state.testResult && state.testResult.success;
-  return `
-    <h2>Test Connection</h2>
-    <div class="card">
-      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">
-        Testing: <strong style="color:var(--text);">${esc(state.currentHost.user)}@${esc(state.currentHost.host)}:${state.currentHost.port}</strong>
-      </p>
-      ${statusHTML}
-      <button class="btn" id="btn-test" ${state.testResult==='loading'?'disabled':''}>
-        ${state.testResult && !state.testResult.success ? 'Retry' : 'Test Connection'}
-      </button>
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-secondary" id="btn-test-back">Back</button>
-      <button class="btn" id="btn-test-next" ${canProceed?'':'disabled'}>Add Server</button>
-    </div>`;
+  var isLoading = state.testResult === 'loading';
+  var canProceed = state.testResult && state.testResult !== 'loading' && state.testResult.success;
+  var testBtnLabel = state.testResult && state.testResult !== 'loading' && !state.testResult.success ? 'Try Again' : 'Test Connection';
+  return '' +
+    '<h2>Test Connection</h2>' +
+    '<div class="card">' +
+      '<p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">' +
+        'Server: <strong style="color:var(--text);">' + esc(state.currentHost.name) + '</strong> &mdash; ' +
+        '<span style="color:var(--text-muted);">' + esc(state.currentHost.user) + '@' + esc(state.currentHost.host) + ':' + state.currentHost.port + '</span>' +
+      '</p>' +
+      statusHTML +
+      '<button class="btn' + (canProceed ? ' btn-secondary' : '') + '" id="btn-test" ' + (isLoading ? 'disabled' : '') + '>' + testBtnLabel + '</button>' +
+    '</div>' +
+    '<div class="btn-row">' +
+      '<button class="btn btn-secondary" id="btn-test-back">Back</button>' +
+      '<button class="btn" id="btn-test-next" ' + (canProceed ? '' : 'disabled') + '>Add Server</button>' +
+    '</div>';
 }
 
 /* ── Step 4: Server List ── */
 function renderServers() {
-  let listHTML = '';
+  var listHTML = '';
   if (state.hosts.length === 0) {
-    listHTML = `<p class="status-msg" style="color:var(--text-dim);">No servers added yet.</p>`;
+    listHTML = '<p class="status-msg" style="color:var(--text-dim);">No servers added yet.</p>';
   } else {
-    listHTML = `<ul class="host-list">${state.hosts.map(h => `
-      <li class="host-item">
-        <div class="host-info">
-          <div class="host-name">${esc(h.name)}</div>
-          <div class="host-addr">${esc(h.user)}@${esc(h.host)}:${h.port}</div>
-        </div>
-        <button class="btn btn-sm btn-danger" data-remove="${esc(h.name)}">Remove</button>
-      </li>`).join('')}</ul>`;
+    var items = '';
+    for (var i = 0; i < state.hosts.length; i++) {
+      var h = state.hosts[i];
+      items += '' +
+        '<li class="host-item">' +
+          '<div class="host-dot"></div>' +
+          '<div class="host-info">' +
+            '<div class="host-name">' + esc(h.name) + '</div>' +
+            '<div class="host-addr">' + esc(h.user) + '@' + esc(h.host) + ':' + h.port + '</div>' +
+          '</div>' +
+          '<button class="btn btn-sm btn-danger" data-remove="' + esc(h.name) + '">&times;</button>' +
+        '</li>';
+    }
+    listHTML = '<ul class="host-list">' + items + '</ul>';
   }
-  return `
-    <h2>Servers (${state.hosts.length})</h2>
-    <div class="card">
-      ${listHTML}
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-secondary" id="btn-add-another">Add Another Server</button>
-      <button class="btn" id="btn-to-theme" ${state.hosts.length===0?'disabled':''}>Continue</button>
-    </div>`;
+  return '' +
+    '<h2>Servers (' + state.hosts.length + ')</h2>' +
+    '<div class="card">' + listHTML + '</div>' +
+    '<button class="btn btn-secondary" id="btn-add-another" style="margin-top:0;">+ Add Another Server</button>' +
+    '<button class="btn" id="btn-to-theme" ' + (state.hosts.length === 0 ? 'disabled' : '') + '>Continue to Theme Selection</button>';
 }
 
 /* ── Step 5: Theme Picker ── */
 function renderTheme() {
   if (!state.themes) {
-    return `
-      <h2>Choose Theme</h2>
-      <div class="card">
-        <div class="status-msg"><div class="spinner"></div><br>Loading themes...</div>
-      </div>`;
+    return '' +
+      '<h2>Choose Theme</h2>' +
+      '<div class="card">' +
+        '<div class="status-msg"><div class="spinner"></div><br>Loading themes...</div>' +
+      '</div>';
   }
-  let familiesHTML = '';
-  const families = state.themes.families;
-  for (const fam of Object.keys(families)) {
-    const variants = families[fam];
-    let swatchesHTML = '';
-    for (const vname of Object.keys(variants)) {
-      const v = variants[vname];
-      const fullName = fam + '/' + vname;
-      const sel = state.theme === fullName ? ' selected' : '';
-      swatchesHTML += `
-        <div class="swatch${sel}" data-theme="${esc(fullName)}"
-             style="background: linear-gradient(135deg, ${v.primary} 0%, ${v.accent} 50%, ${v.background} 100%);">
-          <div class="swatch-tooltip">${esc(vname)}</div>
-        </div>`;
+  var familiesHTML = '';
+  var families = state.themes.families;
+  var famKeys = Object.keys(families);
+  for (var f = 0; f < famKeys.length; f++) {
+    var fam = famKeys[f];
+    var variants = families[fam];
+    var swatchesHTML = '';
+    var vKeys = Object.keys(variants);
+    for (var v = 0; v < vKeys.length; v++) {
+      var vname = vKeys[v];
+      var vdata = variants[vname];
+      var fullName = fam + '/' + vname;
+      var sel = state.theme === fullName ? ' selected' : '';
+      swatchesHTML += '' +
+        '<div class="swatch-wrap">' +
+          '<div class="swatch' + sel + '" data-theme="' + esc(fullName) + '">' +
+            '<div class="swatch-inner">' +
+              '<div class="swatch-bg" style="background:' + vdata.background + ';"></div>' +
+              '<div class="swatch-bg" style="background:' + vdata.panel + ';"></div>' +
+              '<div class="swatch-accent" style="background:' + vdata.primary + ';"></div>' +
+            '</div>' +
+            '<div class="swatch-tooltip">' + esc(fam + '/' + vname) + '</div>' +
+          '</div>' +
+          '<span class="swatch-label">' + esc(vname) + '</span>' +
+        '</div>';
     }
-    familiesHTML += `
-      <div>
-        <div class="theme-family-name">${esc(fam)}</div>
-        <div class="theme-swatches">${swatchesHTML}</div>
-      </div>`;
+    familiesHTML += '' +
+      '<div>' +
+        '<div class="theme-family-name">' + esc(fam) + '</div>' +
+        '<div class="theme-swatches">' + swatchesHTML + '</div>' +
+      '</div>';
   }
-  return `
-    <h2>Choose Theme</h2>
-    <div class="card">
-      <div class="theme-families">${familiesHTML}</div>
-    </div>
-    <p style="text-align:center;font-size:0.8rem;color:var(--text-dim);margin-bottom:0.5rem;">
-      Selected: <strong style="color:var(--green);">${esc(state.theme)}</strong>
-    </p>
-    <div class="btn-row">
-      <button class="btn btn-secondary" id="btn-theme-back">Back</button>
-      <button class="btn" id="btn-to-finish">Continue</button>
-    </div>`;
+  return '' +
+    '<h2>Choose Theme</h2>' +
+    '<div class="card">' +
+      '<div class="theme-families">' + familiesHTML + '</div>' +
+    '</div>' +
+    '<p style="text-align:center;font-size:0.82rem;color:var(--text-dim);margin-bottom:0.25rem;">' +
+      'Selected: <strong style="color:var(--green);">' + esc(state.theme) + '</strong>' +
+    '</p>' +
+    '<div class="btn-row">' +
+      '<button class="btn btn-secondary" id="btn-theme-back">Back</button>' +
+      '<button class="btn" id="btn-to-finish">Finish Setup</button>' +
+    '</div>';
 }
 
 /* ── Step 6: Finish ── */
 function renderFinish() {
-  const hostNames = state.hosts.map(h => h.name).join(', ');
-  return `
-    <h2>Ready to Go</h2>
-    <div class="card">
-      <div class="summary-row">
-        <span class="summary-label">Servers</span>
-        <span class="summary-value">${state.hosts.length}</span>
-      </div>
-      <div class="summary-row">
-        <span class="summary-label">Hosts</span>
-        <span class="summary-value">${esc(hostNames)}</span>
-      </div>
-      <div class="summary-row">
-        <span class="summary-label">Theme</span>
-        <span class="summary-value">${esc(state.theme)}</span>
-      </div>
-    </div>
-    <button class="btn" id="btn-finish" style="font-size:1.1rem;padding:0.9rem;">
-      Start Monitoring
-    </button>
-    <button class="btn btn-secondary" id="btn-finish-back" style="margin-top:0.5rem;">Back</button>`;
+  var hostNames = '';
+  for (var i = 0; i < state.hosts.length; i++) {
+    if (i > 0) hostNames += ', ';
+    hostNames += state.hosts[i].name;
+  }
+  var serverWord = state.hosts.length === 1 ? 'server' : 'servers';
+  return '' +
+    '<h2>Ready to Go</h2>' +
+    '<p class="summary-text">' +
+      'Setting up <strong style="color:var(--green);">' + state.hosts.length + ' ' + serverWord + '</strong> ' +
+      'with theme <strong style="color:var(--green);">' + esc(state.theme) + '</strong>' +
+    '</p>' +
+    '<div class="card">' +
+      '<div class="summary-row">' +
+        '<span class="summary-label">Servers</span>' +
+        '<span class="summary-value">' + state.hosts.length + '</span>' +
+      '</div>' +
+      '<div class="summary-row">' +
+        '<span class="summary-label">Hosts</span>' +
+        '<span class="summary-value">' + esc(hostNames) + '</span>' +
+      '</div>' +
+      '<div class="summary-row">' +
+        '<span class="summary-label">Theme</span>' +
+        '<span class="summary-value">' + esc(state.theme) + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn btn-big" id="btn-finish">Start Monitoring</button>' +
+    '<button class="btn btn-secondary" id="btn-finish-back" style="margin-top:0.5rem;">Back</button>';
 }
 
 /* ── Event binding ── */
 function bindStep(stepName) {
   switch(stepName) {
     case 'welcome':
-      on('btn-start', () => goTo(1));
+      on('btn-start', function() { goTo(1); });
       break;
 
     case 'add-server':
-      on('btn-to-ssh', () => {
-        const name = val('srv-name'), host = val('srv-host'), user = val('srv-user');
-        const port = parseInt($('#srv-port').value, 10) || 22;
-        if (!name || !host || !user) { alert('Please fill in all fields.'); return; }
-        state.currentHost = { name, host, user, port };
+      var nameEl = document.getElementById('srv-name');
+      var hostEl = document.getElementById('srv-host');
+      var userEl = document.getElementById('srv-user');
+      var portEl = document.getElementById('srv-port');
+      var nextBtn = document.getElementById('btn-to-ssh');
+
+      function checkFields() {
+        var n = nameEl ? nameEl.value.trim() : '';
+        var h = hostEl ? hostEl.value.trim() : '';
+        var u = userEl ? userEl.value.trim() : '';
+        if (nextBtn) nextBtn.disabled = !(n && h && u);
+        /* Keep state in sync as user types */
+        state.currentHost.name = n;
+        state.currentHost.host = h;
+        state.currentHost.user = u;
+        state.currentHost.port = parseInt((portEl ? portEl.value : '22'), 10) || 22;
+      }
+
+      if (nameEl) nameEl.addEventListener('input', checkFields);
+      if (hostEl) hostEl.addEventListener('input', checkFields);
+      if (userEl) userEl.addEventListener('input', checkFields);
+      if (portEl) portEl.addEventListener('input', checkFields);
+
+      on('btn-to-ssh', function() {
+        var name = val('srv-name'), host = val('srv-host'), user = val('srv-user');
+        var port = parseInt($('#srv-port').value, 10) || 22;
+        if (!name || !host || !user) return;
+        state.currentHost = { name:name, host:host, user:user, port:port };
         state.testResult = null;
         fetchSSHKey();
         goTo(2);
       });
+      on('btn-add-cancel', function() { goTo(4); });
       break;
 
     case 'ssh-key':
       if (state.sshKey) {
-        on('btn-copy-key', () => copyText('pubkey-area'));
-        on('btn-copy-cmd', () => copyText('cmd-area'));
+        on('btn-copy-key', function() { copyText('pubkey-area', 'btn-copy-key'); });
+        on('btn-copy-cmd', function() { copyText('cmd-area', 'btn-copy-cmd'); });
       }
-      on('btn-to-test', () => {
-        const pw = $('#ssh-password');
+      on('btn-key-done', function() {
+        var pw = document.getElementById('ssh-password');
         state.testPassword = pw ? pw.value : '';
         goTo(3);
+      });
+      on('btn-expand-pw', function() {
+        var toggle = document.getElementById('btn-expand-pw');
+        var section = document.getElementById('pw-section');
+        if (toggle && section) {
+          toggle.classList.toggle('open');
+          section.classList.toggle('open');
+        }
+      });
+      on('btn-auto-copy', function() {
+        var pw = document.getElementById('ssh-password');
+        state.testPassword = pw ? pw.value : '';
+        if (!state.testPassword) { alert('Please enter the server password.'); return; }
+        goTo(3);
+        /* Auto-start the test */
+        setTimeout(function() { doTest(); }, 100);
       });
       break;
 
     case 'test':
       on('btn-test', doTest);
-      on('btn-test-back', () => goTo(2));
-      on('btn-test-next', () => {
-        addHost();
-      });
+      on('btn-test-back', function() { goTo(2); });
+      on('btn-test-next', function() { addHost(); });
       break;
 
     case 'servers':
-      on('btn-add-another', () => {
+      on('btn-add-another', function() {
         state.currentHost = { name:'', host:'', user:'', port:22 };
         state.testResult = null;
         state.testPassword = '';
         goTo(1);
       });
-      on('btn-to-theme', () => {
+      on('btn-to-theme', function() {
         fetchThemes();
         goTo(5);
       });
-      $$('[data-remove]').forEach(btn => {
-        btn.addEventListener('click', () => removeHost(btn.dataset.remove));
+      $$('[data-remove]').forEach(function(btn) {
+        btn.addEventListener('click', function() { removeHost(btn.dataset.remove); });
       });
       break;
 
     case 'theme':
-      $$('.swatch').forEach(s => {
-        s.addEventListener('click', () => {
+      $$('.swatch').forEach(function(s) {
+        s.addEventListener('click', function() {
           state.theme = s.dataset.theme;
           renderStep();
         });
       });
-      on('btn-theme-back', () => goTo(4));
-      on('btn-to-finish', () => goTo(6));
+      on('btn-theme-back', function() { goTo(4); });
+      on('btn-to-finish', function() { goTo(6); });
       break;
 
     case 'finish':
       on('btn-finish', doFinish);
-      on('btn-finish-back', () => goTo(5));
+      on('btn-finish-back', function() { goTo(5); });
       break;
   }
 }
 
 /* ── Helpers ── */
 function on(id, fn) {
-  const el = document.getElementById(id);
+  var el = document.getElementById(id);
   if (el) el.addEventListener('click', fn);
 }
-function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function val(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function esc(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function copyText(id) {
-  const el = document.getElementById(id);
+function copyText(id, btnId) {
+  var el = document.getElementById(id);
   if (!el) return;
   el.select();
-  navigator.clipboard.writeText(el.value).catch(() => document.execCommand('copy'));
-  const btn = el.parentElement.querySelector('.copy-btn');
-  if (btn) { btn.textContent = 'COPIED'; setTimeout(() => btn.textContent = 'COPY', 1500); }
+  navigator.clipboard.writeText(el.value).catch(function() { document.execCommand('copy'); });
+  var btn = btnId ? document.getElementById(btnId) : el.parentElement.querySelector('.copy-btn');
+  if (btn) {
+    btn.textContent = 'COPIED';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'COPY'; btn.classList.remove('copied'); }, 2000);
+  }
 }
 
-async function api(method, path, body) {
-  const opts = { method, headers: {} };
+function api(method, path, body) {
+  var opts = { method: method, headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opts);
-  if (!r.ok) {
-    const text = await r.text();
-    try { return JSON.parse(text); } catch(e) {}
-    return { success: false, error: 'Server error: ' + r.status };
-  }
-  return r.json();
+  return fetch(path, opts).then(function(r) {
+    if (!r.ok) {
+      return r.text().then(function(text) {
+        try { return JSON.parse(text); } catch(e) {}
+        return { success: false, error: 'Server error: ' + r.status };
+      });
+    }
+    return r.json();
+  });
 }
 
 /* ── API calls ── */
-async function fetchSSHKey() {
+function fetchSSHKey() {
   if (state.sshKey) return;
-  try {
-    const data = await api('GET', '/api/setup/ssh-key');
+  api('GET', '/api/setup/ssh-key').then(function(data) {
     state.sshKey = data;
-  } catch(e) {
+  }).catch(function(e) {
     state.sshKey = { public_key: 'Error loading key: ' + e.message, key_path: '', generated: false };
-  }
-  if (STEPS[state.step] === 'ssh-key') renderStep();
+  }).then(function() {
+    if (STEPS[state.step] === 'ssh-key') renderStep();
+  });
 }
 
-async function fetchThemes() {
+function fetchThemes() {
   if (state.themes) return;
-  try {
-    state.themes = await api('GET', '/api/setup/themes');
-  } catch(e) {
+  api('GET', '/api/setup/themes').then(function(data) {
+    state.themes = data;
+  }).catch(function(e) {
     state.themes = { families: {} };
-  }
-  if (STEPS[state.step] === 'theme') renderStep();
+  }).then(function() {
+    if (STEPS[state.step] === 'theme') renderStep();
+  });
 }
 
-async function doTest() {
+function doTest() {
   state.testResult = 'loading';
   renderStep();
-  try {
-    const body = {
-      host: state.currentHost.host,
-      user: state.currentHost.user,
-      port: state.currentHost.port,
-    };
-    if (state.testPassword) body.password = state.testPassword;
-    state.testResult = await api('POST', '/api/setup/test-connection', body);
-  } catch(e) {
+  var body = {
+    host: state.currentHost.host,
+    user: state.currentHost.user,
+    port: state.currentHost.port,
+  };
+  if (state.testPassword) body.password = state.testPassword;
+  api('POST', '/api/setup/test-connection', body).then(function(data) {
+    state.testResult = data;
+  }).catch(function(e) {
     state.testResult = { success: false, error: e.message };
-  }
-  renderStep();
+  }).then(function() {
+    renderStep();
+  });
 }
 
-async function addHost() {
-  try {
-    const data = await api('POST', '/api/setup/add-host', state.currentHost);
+function addHost() {
+  api('POST', '/api/setup/add-host', state.currentHost).then(function(data) {
     if (data.success) {
       state.hosts = data.hosts;
       goTo(4);
     } else {
       alert(data.error || 'Failed to add host');
     }
-  } catch(e) {
+  }).catch(function(e) {
     alert('Error: ' + e.message);
-  }
+  });
 }
 
-async function removeHost(name) {
-  try {
-    const data = await api('POST', '/api/setup/remove-host', { name });
+function removeHost(name) {
+  api('POST', '/api/setup/remove-host', { name: name }).then(function(data) {
     if (data.success) {
       state.hosts = data.hosts;
       renderStep();
     }
-  } catch(e) {
+  }).catch(function(e) {
     alert('Error: ' + e.message);
-  }
+  });
 }
 
-async function doFinish() {
-  const btn = document.getElementById('btn-finish');
+function doFinish() {
+  var btn = document.getElementById('btn-finish');
   if (btn) btn.disabled = true;
-  const overlay = document.getElementById('overlay');
-  try {
-    const data = await api('POST', '/api/setup/finish', { theme: state.theme });
+  var overlay = document.getElementById('overlay');
+  var msg = document.getElementById('overlay-msg');
+  overlay.classList.add('show');
+  msg.textContent = 'Saving configuration...';
+  api('POST', '/api/setup/finish', { theme: state.theme }).then(function(data) {
     if (data.success) {
-      overlay.classList.add('show');
-      document.getElementById('overlay-msg').textContent = 'Connecting to servers...';
-      setTimeout(() => {
-        document.getElementById('overlay-msg').textContent = 'Starting dashboard...';
-      }, 2000);
-      setTimeout(() => { window.location.href = '/'; }, 4000);
+      msg.textContent = 'Setup complete! Loading dashboard...';
+      setTimeout(function() { window.location.href = '/'; }, 2000);
     } else {
+      overlay.classList.remove('show');
       alert(data.error || 'Setup failed');
       if (btn) btn.disabled = false;
     }
-  } catch(e) {
+  }).catch(function(e) {
+    overlay.classList.remove('show');
     alert('Error: ' + e.message);
     if (btn) btn.disabled = false;
-  }
+  });
 }
 
 /* ── Init ── */
@@ -1583,8 +1825,8 @@ def start_server(port: int | None = None, bind: str | None = None) -> None:
             _app_mod._display_mgr = DisplayManager(
                 f"http://localhost:{CONTROL_PORT}/display"
             )
-    HTTPServer.allow_reuse_address = True
-    server = HTTPServer((bind_addr, CONTROL_PORT), ControlHandler)
+    ThreadingHTTPServer.allow_reuse_address = True
+    server = ThreadingHTTPServer((bind_addr, CONTROL_PORT), ControlHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _server_started = True
@@ -1817,6 +2059,7 @@ let enabledScreens = []; // [{id, name, html, duration}]
 let pauseUntil = 0;
 let lastRotate = Date.now();
 const PAUSE_MS = __PAUSE_S__ * 1000;
+const DEFAULT_SCREEN_DURATION = __DEFAULT_SCREEN_DURATION__;
 let screenRotation = {}; // {id: {enabled, duration}}
 let hostData = null; // {hosts: [...], active_host: "..."}
 let lastHostRotate = Date.now();
@@ -1913,11 +2156,11 @@ function renderDisplay() {
     return !cfg || cfg.enabled !== false;
   }).map(s => {
     const cfg = screenRotation[s.id];
-    return { id: s.id, name: s.name, html: s.fn(c), duration: (cfg && cfg.duration) || 10 };
+    return { id: s.id, name: s.name, html: s.fn(c), duration: (cfg && cfg.duration) || DEFAULT_SCREEN_DURATION };
   });
   if (enabledScreens.length === 0) {
     // Fallback: show first screen if all disabled
-    enabledScreens = [{ id: allScreens[0].id, name: allScreens[0].name, html: allScreens[0].fn(c), duration: 10 }];
+    enabledScreens = [{ id: allScreens[0].id, name: allScreens[0].name, html: allScreens[0].fn(c), duration: DEFAULT_SCREEN_DURATION }];
   }
   if (currentScreenIdx >= enabledScreens.length) currentScreenIdx = 0;
   document.getElementById('display').innerHTML = enabledScreens[currentScreenIdx].html;
@@ -1989,7 +2232,7 @@ async function poll() {
 function tick() {
   const now = Date.now();
   if (enabledScreens.length > 1 && now > pauseUntil) {
-    const currentDuration = (enabledScreens[currentScreenIdx] || {}).duration || 10;
+    const currentDuration = (enabledScreens[currentScreenIdx] || {}).duration || DEFAULT_SCREEN_DURATION;
     if (now - lastRotate >= currentDuration * 1000) {
       currentScreenIdx = (currentScreenIdx + 1) % enabledScreens.length;
       lastRotate = now;
@@ -2029,6 +2272,7 @@ requestAnimationFrame(tick);
         html
         .replace("__PANEL_SPEC_JSON__", json.dumps(spec))
         .replace("__PAUSE_S__", str(pause_s))
+        .replace("__DEFAULT_SCREEN_DURATION__", str(_default_screen_duration))
         .replace("__DISPLAY_W__", str(_display_width))
         .replace("__DISPLAY_H__", str(_display_height))
         .replace("__SCREEN_FUNCTIONS__", screen_fns)

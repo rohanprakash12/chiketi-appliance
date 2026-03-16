@@ -145,24 +145,52 @@ if [ -n "$ADD_NAME" ]; then
     else
         info "Adding host '$ADD_NAME' to $CONFIG_FILE..."
 
-        # Check if the host name already exists in config
-        if grep -q "name: \"$ADD_NAME\"" "$CONFIG_FILE" 2>/dev/null; then
-            warn "Host '$ADD_NAME' already exists in config, skipping."
-        else
-            # Build the host entry
-            HOST_ENTRY="\n  - name: \"$ADD_NAME\"\n    host: $SSH_HOST\n    user: $SSH_USER\n    key: $SSH_KEY"
-            if [ "$SSH_PORT" != "22" ]; then
-                HOST_ENTRY="$HOST_ENTRY\n    port: $SSH_PORT"
-            fi
+        # Use Python + PyYAML for safe YAML manipulation (avoids shell
+        # interpolation issues with special characters in hostnames/usernames)
+        if python3 -c "
+import sys, yaml, os
 
-            # Append after the last host entry (before display: section)
-            if grep -q "^display:" "$CONFIG_FILE" 2>/dev/null; then
-                sed -i "/^display:/i\\$HOST_ENTRY" "$CONFIG_FILE"
-            else
-                # Just append to end of file
-                echo -e "$HOST_ENTRY" >> "$CONFIG_FILE"
-            fi
+config_path = sys.argv[1]
+add_name    = sys.argv[2]
+ssh_host    = sys.argv[3]
+ssh_user    = sys.argv[4]
+ssh_key     = sys.argv[5]
+ssh_port    = int(sys.argv[6])
+
+with open(config_path, 'r') as f:
+    config = yaml.safe_load(f) or {}
+
+hosts = config.get('hosts', [])
+if not isinstance(hosts, list):
+    hosts = []
+
+# Check for duplicate name
+for h in hosts:
+    if isinstance(h, dict) and h.get('name') == add_name:
+        print(f'Host \"{add_name}\" already exists in config, skipping.', file=sys.stderr)
+        sys.exit(2)
+
+entry = {'name': add_name, 'host': ssh_host, 'user': ssh_user, 'key': ssh_key}
+if ssh_port != 22:
+    entry['port'] = ssh_port
+
+hosts.append(entry)
+config['hosts'] = hosts
+
+tmp = config_path + '.tmp'
+with open(tmp, 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+os.replace(tmp, config_path)
+os.chmod(config_path, 0o600)
+" "$CONFIG_FILE" "$ADD_NAME" "$SSH_HOST" "$SSH_USER" "$SSH_KEY" "$SSH_PORT" 2>&1; then
             info "Host '$ADD_NAME' added to config."
+        else
+            rc=$?
+            if [ "$rc" -eq 2 ]; then
+                warn "Host '$ADD_NAME' already exists in config, skipping."
+            else
+                warn "Failed to update config file."
+            fi
         fi
     fi
 fi

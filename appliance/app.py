@@ -564,8 +564,27 @@ def run(config_path: str | None = None, *, config: ApplianceConfig | None = None
 
     # Apply display config to server module
     display_cfg = config.display
+    import appliance.server as _srv
+
+    # Apply theme from config
+    if display_cfg.get("theme"):
+        from appliance.themes import set_active_theme
+        theme_key = display_cfg["theme"]
+        if not set_active_theme(theme_key):
+            print(f"chiketi-appliance: warning: unknown theme '{theme_key}', using default",
+                  file=sys.stderr)
+
+    # Apply screen rotation interval
+    if display_cfg.get("rotate_interval"):
+        try:
+            interval = int(display_cfg["rotate_interval"])
+            if interval >= 3:
+                _srv._default_screen_duration = interval
+        except (ValueError, TypeError):
+            pass
+
+    # Apply host rotation settings
     if display_cfg.get("host_rotate") and display_cfg.get("host_rotate_interval"):
-        import appliance.server as _srv
         _srv._host_rotate_interval = int(display_cfg["host_rotate_interval"])
 
     server_port = config.server.get("port", CONTROL_PORT)

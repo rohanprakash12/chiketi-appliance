@@ -102,7 +102,43 @@ def load_config(path: str) -> ApplianceConfig:
         raise ValueError("Host names must be unique")
 
     display = raw.get("display", {})
+    if not isinstance(display, dict):
+        display = {}
     server = raw.get("server", {})
+    if not isinstance(server, dict):
+        server = {}
+
+    # Validate server.port
+    if "port" in server:
+        try:
+            port_val = int(server["port"])
+            if not (1 <= port_val <= 65535):
+                raise ValueError(
+                    f"server.port must be between 1 and 65535, got {port_val}"
+                )
+            server["port"] = port_val
+        except (ValueError, TypeError) as exc:
+            if isinstance(exc, ValueError) and "server.port" in str(exc):
+                raise
+            raise ValueError(
+                f"server.port must be an integer, got {server['port']!r}"
+            )
+
+    # Validate display.rotate_interval
+    if "rotate_interval" in display:
+        try:
+            ri = int(display["rotate_interval"])
+            if ri <= 0:
+                raise ValueError(
+                    f"display.rotate_interval must be a positive number, got {ri}"
+                )
+            display["rotate_interval"] = ri
+        except (ValueError, TypeError) as exc:
+            if isinstance(exc, ValueError) and "rotate_interval" in str(exc):
+                raise
+            raise ValueError(
+                f"display.rotate_interval must be a positive number, got {display['rotate_interval']!r}"
+            )
 
     return ApplianceConfig(hosts=hosts, display=display, server=server)
 
