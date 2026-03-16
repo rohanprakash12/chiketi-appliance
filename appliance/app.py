@@ -17,7 +17,7 @@ from appliance.collectors.base import MetricValue
 from appliance.collectors.registry import create_collectors
 from appliance.collectors.remote import RemoteCollector
 from appliance.config import TIMING
-from appliance.hosts import ApplianceConfig, load_config
+from appliance.hosts import ApplianceConfig, HostConfig, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,32 @@ class MetricEngine(threading.Thread):
     def get_host_names(self) -> list[str]:
         """Return all configured host names in order."""
         return [c.name for c in self._collectors]
+
+    def add_host(self, host_config: HostConfig) -> bool:
+        """Add a new host at runtime. Creates collector, connects, adds to collection loop."""
+        from appliance.collectors.remote import RemoteCollector
+        collector = RemoteCollector(host_config)
+        collector.connect()
+        with self._lock:
+            self._collectors.append(collector)
+        return True
+
+    def remove_host(self, name: str) -> bool:
+        """Remove a host at runtime. Disconnects and removes from collection loop."""
+        with self._lock:
+            for i, c in enumerate(self._collectors):
+                if c.name == name:
+                    c.disconnect()
+                    self._collectors.pop(i)
+                    self._latest.pop(name, None)
+                    if self._active_host == name:
+                        self._active_host = self._collectors[0].name if self._collectors else ""
+                    return True
+        return False
+
+    def get_host_configs(self) -> list[HostConfig]:
+        """Return configs for all collectors."""
+        return [c._config for c in self._collectors]
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +487,39 @@ def get_display_manager() -> DisplayManager | None:
     return _display_mgr
 
 
+# Module-level engine reference — set during run()
+_engine: MetricEngine | None = None
+
+
+def add_host_runtime(host_config: HostConfig) -> bool:
+    if _engine:
+        return _engine.add_host(host_config)
+    return False
+
+
+def remove_host_runtime(name: str) -> bool:
+    if _engine:
+        return _engine.remove_host(name)
+    return False
+
+
+def get_host_configs() -> list:
+    if _engine:
+        return _engine.get_host_configs()
+    return []
+
+
+def save_current_config() -> str | None:
+    """Save the current running config to disk."""
+    if not _engine:
+        return None
+    from appliance.hosts import ApplianceConfig, save_config
+    configs = _engine.get_host_configs()
+    # Preserve existing display/server config
+    ac = ApplianceConfig(hosts=configs, display={}, server={})
+    return save_config(ac)
+
+
 def run_setup_mode(port: int = 7777) -> int:
     """Start in setup wizard mode -- no config, no collectors, just the HTTP server."""
     global _setup_mode, _display_mgr
@@ -548,7 +607,9 @@ def run(config_path: str | None = None, *, config: ApplianceConfig | None = None
                 print(f"  {collector.name}: ERROR: {exc}")
 
     # Start metric collection thread
+    global _engine
     engine = MetricEngine(collectors)
+    _engine = engine
     engine.start()
 
     # Start control panel HTTP server (with metrics access)

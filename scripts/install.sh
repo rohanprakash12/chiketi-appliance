@@ -122,42 +122,7 @@ mkdir -p "$CONFIG_DIR"
 if [ -f "$CONFIG_FILE" ]; then
     info "Config already exists at $CONFIG_FILE (not overwriting)"
 else
-    # Find config.example.yaml
-    EXAMPLE_CONFIG=""
-    if [ -f "$PROJECT_DIR/config.example.yaml" ]; then
-        EXAMPLE_CONFIG="$PROJECT_DIR/config.example.yaml"
-    elif [ -f "/usr/share/chiketi-appliance/config.example.yaml" ]; then
-        EXAMPLE_CONFIG="/usr/share/chiketi-appliance/config.example.yaml"
-    fi
-
-    if [ -n "$EXAMPLE_CONFIG" ]; then
-        cp "$EXAMPLE_CONFIG" "$CONFIG_FILE"
-        info "Copied example config to $CONFIG_FILE"
-    else
-        # Generate a minimal default config
-        cat > "$CONFIG_FILE" << 'YAML'
-# chiketi-appliance configuration
-# Add your remote hosts below
-
-hosts:
-  - name: "my-server"
-    host: 192.168.1.100
-    user: your-username
-    key: ~/.ssh/id_rsa
-    # port: 22  (default)
-
-display:
-  theme: Panel/Gold
-  rotate_interval: 10
-  host_rotate: true
-  host_rotate_interval: 30
-
-server:
-  port: 7777
-  bind: 0.0.0.0
-YAML
-        info "Created default config at $CONFIG_FILE"
-    fi
+    info "No config file found — the setup wizard will guide you on first run."
 fi
 
 # ── Verify installation ──
@@ -166,17 +131,14 @@ if command -v chiketi-appliance >/dev/null 2>&1; then
     echo ""
     echo "  Next steps:"
     echo ""
-    step "1. Edit your config file:"
-    echo "     nano $CONFIG_FILE"
+    step "1. Run the appliance:"
+    echo "     chiketi-appliance"
     echo ""
-    step "2. Set up SSH keys to your remote hosts:"
-    echo "     $SCRIPT_DIR/setup-ssh.sh user@hostname"
+    step "2. Open the setup wizard in your browser:"
+    PI_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'localhost')
+    echo "     http://${PI_IP}:7777/"
     echo ""
-    step "3. Run the appliance:"
-    echo "     chiketi-appliance --config $CONFIG_FILE"
-    echo ""
-    step "4. Open the control panel in a browser:"
-    echo "     http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'localhost'):7777"
+    echo "  The wizard will walk you through adding servers, SSH keys, and themes."
     echo ""
     echo "  If 'chiketi-appliance' is not found, open a new terminal and try again."
     echo ""

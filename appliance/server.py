@@ -218,9 +218,6 @@ class ControlHandler(BaseHTTPRequestHandler):
             })
             return
         if self.path == "/api/setup/ssh-key":
-            if not _setup_mode_flag:
-                self.send_error(404)
-                return
             self._handle_ssh_key_get()
             return
         if self.path == "/api/setup/themes":
@@ -310,21 +307,12 @@ class ControlHandler(BaseHTTPRequestHandler):
 
         # ── Setup wizard POST routes ──
         if path == "/api/setup/test-connection":
-            if not _setup_mode_flag:
-                self.send_error(404)
-                return
             self._handle_test_connection()
             return
         if path == "/api/setup/add-host":
-            if not _setup_mode_flag:
-                self.send_error(404)
-                return
             self._handle_add_host()
             return
         if path == "/api/setup/remove-host":
-            if not _setup_mode_flag:
-                self.send_error(404)
-                return
             self._handle_remove_host()
             return
         if path == "/api/setup/finish":
@@ -647,22 +635,51 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._json_error(400, "user is required")
             return
 
-        # Check for duplicate name
-        for h in _staged_hosts:
-            if h["name"] == name:
-                self._json_error(400, f"Host with name '{name}' already exists")
-                return
+        if _setup_mode_flag:
+            # Setup mode: add to staged list
+            for h in _staged_hosts:
+                if h["name"] == name:
+                    self._json_error(400, f"Host with name '{name}' already exists")
+                    return
 
-        _staged_hosts.append({
-            "name": name,
-            "host": host,
-            "user": user,
-            "port": port,
-        })
-        self._json_response({"success": True, "hosts": _staged_hosts})
+            _staged_hosts.append({
+                "name": name,
+                "host": host,
+                "user": user,
+                "port": port,
+            })
+            self._json_response({"success": True, "hosts": _staged_hosts})
+        else:
+            # Runtime mode: add to running engine and save config
+            from appliance.app import add_host_runtime, save_current_config
+            from appliance.hosts import HostConfig
+
+            # Check for duplicate name against running hosts
+            if _host_names_getter:
+                existing = _host_names_getter()
+                if name in existing:
+                    self._json_error(400, f"Host with name '{name}' already exists")
+                    return
+
+            # Determine SSH key path
+            ssh_dir = os.path.expanduser("~/.ssh")
+            key_path = None
+            for key_name in ("id_ed25519", "id_rsa"):
+                candidate = os.path.join(ssh_dir, key_name)
+                if os.path.isfile(candidate):
+                    key_path = candidate
+                    break
+
+            hc = HostConfig(name=name, host=host, user=user, port=port, key_path=key_path)
+            try:
+                add_host_runtime(hc)
+                save_current_config()
+                self._json_response({"success": True})
+            except Exception as exc:
+                self._json_error(500, f"Failed to add host: {exc}")
 
     def _handle_remove_host(self) -> None:
-        """POST /api/setup/remove-host — remove a host from the staged list."""
+        """POST /api/setup/remove-host — remove a host from the staged or running list."""
         global _staged_hosts
         try:
             body = self._read_json_body()
@@ -675,13 +692,22 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._json_error(400, "name is required")
             return
 
-        original_len = len(_staged_hosts)
-        _staged_hosts = [h for h in _staged_hosts if h["name"] != name]
-        if len(_staged_hosts) == original_len:
-            self._json_error(404, f"Host '{name}' not found")
-            return
-
-        self._json_response({"success": True, "hosts": _staged_hosts})
+        if _setup_mode_flag:
+            # Setup mode: remove from staged list
+            original_len = len(_staged_hosts)
+            _staged_hosts = [h for h in _staged_hosts if h["name"] != name]
+            if len(_staged_hosts) == original_len:
+                self._json_error(404, f"Host '{name}' not found")
+                return
+            self._json_response({"success": True, "hosts": _staged_hosts})
+        else:
+            # Runtime mode: remove from running engine and save config
+            from appliance.app import remove_host_runtime, save_current_config
+            if remove_host_runtime(name):
+                save_current_config()
+                self._json_response({"success": True})
+            else:
+                self._json_error(404, f"Host '{name}' not found")
 
     def _handle_setup_finish(self) -> None:
         """POST /api/setup/finish — save config and transition to monitoring."""
@@ -4088,6 +4114,20 @@ def _build_html() -> str:
   <div class="settings-section">
     <h3>Remote Hosts</h3>
     <div id="hostList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div style="margin-top:12px;border-top:1px solid #333;padding-top:12px">
+      <h4 style="color:#999;font-size:12px;margin-bottom:8px">ADD NEW HOST</h4>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <input type="text" id="newHostName" placeholder="Friendly name (e.g. gpu-server)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="text" id="newHostAddr" placeholder="IP or hostname (e.g. 192.168.1.50)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="text" id="newHostUser" placeholder="SSH username" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <div style="display:flex;gap:6px">
+          <input type="number" id="newHostPort" placeholder="Port" value="22" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px;width:80px">
+          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Test Connection</button>
+          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Add Host</button>
+        </div>
+        <div id="hostActionStatus" style="font-size:11px;min-height:16px"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -4331,14 +4371,93 @@ function renderHostList() {
     const isActive = h.name === _hostData.active_host;
     const card = document.createElement('div');
     card.className = 'host-card' + (isActive ? ' active-host' : '');
-    card.onclick = () => cpSwitchHost(h.name);
-    card.innerHTML =
+    card.style.position = 'relative';
+    const mainArea = document.createElement('div');
+    mainArea.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;cursor:pointer';
+    mainArea.onclick = () => cpSwitchHost(h.name);
+    mainArea.innerHTML =
       `<div class="host-dot ${h.online ? 'online' : 'offline'}"></div>` +
       `<span class="host-name">${h.name}</span>` +
       (h.latency_ms != null ? `<span class="host-latency">${h.latency_ms}ms</span>` : '') +
       (isActive ? '<span class="host-active-tag">active</span>' : '');
+    card.appendChild(mainArea);
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = '\u00d7';
+    removeBtn.title = 'Remove host';
+    removeBtn.style.cssText = 'background:none;border:1px solid transparent;color:#666;font-size:16px;cursor:pointer;padding:2px 6px;border-radius:3px;line-height:1;transition:all 0.2s';
+    removeBtn.onmouseenter = () => { removeBtn.style.color='#f44'; removeBtn.style.borderColor='#f44'; };
+    removeBtn.onmouseleave = () => { removeBtn.style.color='#666'; removeBtn.style.borderColor='transparent'; };
+    removeBtn.onclick = (e) => { e.stopPropagation(); cpRemoveHost(h.name); };
+    card.appendChild(removeBtn);
     el.appendChild(card);
   }
+}
+
+async function cpTestHost() {
+  const host = document.getElementById('newHostAddr').value.trim();
+  const user = document.getElementById('newHostUser').value.trim();
+  const port = parseInt(document.getElementById('newHostPort').value) || 22;
+  if (!host || !user) { setHostStatus('Host and username required', false); return; }
+  setHostStatus('Testing connection...', null);
+  try {
+    const res = await fetch(API + '/api/setup/test-connection', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, user, port})
+    });
+    const data = await res.json();
+    if (data.success) {
+      setHostStatus('Connected! Hostname: ' + data.hostname, true);
+    } else {
+      setHostStatus('Failed: ' + data.error, false);
+    }
+  } catch(e) { setHostStatus('Error: ' + e, false); }
+}
+
+async function cpAddHost() {
+  const name = document.getElementById('newHostName').value.trim();
+  const host = document.getElementById('newHostAddr').value.trim();
+  const user = document.getElementById('newHostUser').value.trim();
+  const port = parseInt(document.getElementById('newHostPort').value) || 22;
+  if (!name || !host || !user) { setHostStatus('All fields required', false); return; }
+  try {
+    const res = await fetch(API + '/api/setup/add-host', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name, host, user, port})
+    });
+    const data = await res.json();
+    if (data.success) {
+      setHostStatus('Host added!', true);
+      document.getElementById('newHostName').value = '';
+      document.getElementById('newHostAddr').value = '';
+      document.getElementById('newHostUser').value = '';
+      document.getElementById('newHostPort').value = '22';
+      await loadHosts();
+    } else {
+      setHostStatus(data.error || 'Failed to add host', false);
+    }
+  } catch(e) { setHostStatus('Error: ' + e, false); }
+}
+
+async function cpRemoveHost(name) {
+  if (!confirm('Remove host "' + name + '"?')) return;
+  try {
+    const res = await fetch(API + '/api/setup/remove-host', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    });
+    const data = await res.json();
+    if (data.success) {
+      setStatus('Host removed', true);
+      await loadHosts();
+    } else { setStatus(data.error || 'Failed', false); }
+  } catch(e) { setStatus('Error', false); }
+}
+
+function setHostStatus(msg, ok) {
+  const el = document.getElementById('hostActionStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = ok === null ? '#999' : ok ? '#0f0' : '#f44';
 }
 
 async function cpSwitchHost(name) {
