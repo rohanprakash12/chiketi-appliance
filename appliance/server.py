@@ -220,7 +220,7 @@ def _get_or_generate_pubkey() -> str | None:
     generators = []
     if hasattr(paramiko.Ed25519Key, "generate"):
         generators.append((paramiko.Ed25519Key.generate, ed25519_path, {}))
-    generators.append((paramiko.RSAKey.generate, rsa_path, {"bits": 4096}))
+    generators.append((paramiko.RSAKey.generate, rsa_path, {"bits": 2048}))
 
     for gen_func, gen_path, gen_args in generators:
         try:
