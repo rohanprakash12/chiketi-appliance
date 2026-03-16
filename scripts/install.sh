@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# chiketi-appliance installer — sets up all prerequisites on Debian/Ubuntu (Raspberry Pi)
+# chiketi-appliance installer
+# Usage: curl -sL https://raw.githubusercontent.com/rohanprakash12/chiketi-appliance/main/scripts/install.sh | bash
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -13,8 +14,6 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[x]${NC} $1"; exit 1; }
 step()  { echo -e "${CYAN}[>]${NC} $1"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_DIR="$HOME/.config/chiketi-appliance"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 
@@ -57,7 +56,7 @@ command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>
 
 if [ -n "$PKGS" ]; then
     info "Installing system packages:$PKGS"
-    sudo apt-get install -y -qq $PKGS
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS
 else
     info "System packages already installed"
 fi
@@ -75,7 +74,7 @@ info "Python $PY_VER OK"
 # ── Install pipx ──
 if ! command -v pipx >/dev/null 2>&1; then
     info "Installing pipx..."
-    python3 -m pip install --user pipx 2>/dev/null || sudo apt-get install -y -qq pipx
+    python3 -m pip install --user pipx 2>/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pipx
     python3 -m pipx ensurepath 2>/dev/null || true
     export PATH="$HOME/.local/bin:$PATH"
 fi
@@ -86,14 +85,8 @@ info "Ensuring pip and setuptools are up to date..."
 python3 -m pip install --user --upgrade pip setuptools wheel 2>/dev/null || true
 
 # ── Install chiketi-appliance ──
-info "Installing chiketi-appliance..."
-if [ -f "$PROJECT_DIR/pyproject.toml" ]; then
-    # Installing from local source (development)
-    pipx install "$PROJECT_DIR" --force --pip-args="--upgrade-strategy eager"
-else
-    # Installing from GitHub
-    pipx install "git+https://github.com/rohanprakash12/chiketi-appliance.git" --force --pip-args="--upgrade-strategy eager"
-fi
+info "Installing chiketi-appliance from GitHub..."
+pipx install "git+https://github.com/rohanprakash12/chiketi-appliance.git" --force --pip-args="--upgrade-strategy eager"
 
 # ── Fix PATH ──
 PIPX_BIN="$HOME/.local/bin"
@@ -115,14 +108,13 @@ if ! echo "$PATH" | grep -q "$PIPX_BIN"; then
     fi
 fi
 
-# ── Create config directory and default config ──
-info "Setting up configuration..."
+# ── Create config directory ──
 mkdir -p "$CONFIG_DIR"
 
 if [ -f "$CONFIG_FILE" ]; then
     info "Config already exists at $CONFIG_FILE (not overwriting)"
 else
-    info "No config file found — the setup wizard will guide you on first run."
+    info "No config file — the setup wizard will guide you on first run."
 fi
 
 # ── Verify installation ──
@@ -139,8 +131,6 @@ if command -v chiketi-appliance >/dev/null 2>&1; then
     echo "     http://${PI_IP}:7777/"
     echo ""
     echo "  The wizard will walk you through adding servers, SSH keys, and themes."
-    echo ""
-    echo "  If 'chiketi-appliance' is not found, open a new terminal and try again."
     echo ""
 else
     fail "Installation failed. Check errors above."
