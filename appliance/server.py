@@ -1674,7 +1674,7 @@ function bindStep(stepName) {
       var hostEl = document.getElementById('srv-host');
       var userEl = document.getElementById('srv-user');
       var portEl = document.getElementById('srv-port');
-      var nextBtn = document.getElementById('btn-to-ssh');
+      var nextBtn = document.getElementById('btn-to-test');
 
       function checkFields() {
         var n = nameEl ? nameEl.value.trim() : '';
