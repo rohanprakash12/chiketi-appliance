@@ -306,6 +306,9 @@ class ControlHandler(BaseHTTPRequestHandler):
         path = self.path
 
         # ── Setup wizard POST routes ──
+        if path == "/api/setup/copy-key":
+            self._handle_copy_key()
+            return
         if path == "/api/setup/test-connection":
             self._handle_test_connection()
             return
@@ -511,6 +514,81 @@ class ControlHandler(BaseHTTPRequestHandler):
             })
         except Exception as exc:
             self._json_error(500, f"Failed to generate SSH key: {exc}")
+
+    def _handle_copy_key(self) -> None:
+        """POST /api/setup/copy-key — SSH in with password and copy the public key."""
+        import paramiko
+
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        host = body.get("host", "").strip()
+        user = body.get("user", "").strip()
+        password = body.get("password", "")
+        try:
+            port = int(body.get("port", 22))
+        except (ValueError, TypeError):
+            port = 22
+
+        if not host or not user or not password:
+            self._json_error(400, "host, user, and password are required")
+            return
+
+        # Read the local public key
+        ssh_dir = os.path.expanduser("~/.ssh")
+        pub_key = None
+        for key_name in ("id_ed25519.pub", "id_rsa.pub"):
+            pub_path = os.path.join(ssh_dir, key_name)
+            if os.path.isfile(pub_path):
+                try:
+                    with open(pub_path, "r") as f:
+                        pub_key = f.read().strip()
+                    break
+                except Exception:
+                    continue
+
+        if not pub_key:
+            self._json_error(400, "No SSH public key found. Load the SSH Key step first.")
+            return
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            client.connect(
+                hostname=host, username=user, password=password,
+                port=port, timeout=10, allow_agent=False, look_for_keys=False,
+            )
+            # Create .ssh dir and append key to authorized_keys
+            cmd = (
+                'mkdir -p ~/.ssh && chmod 700 ~/.ssh && '
+                'touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && '
+                f'grep -qF "{pub_key}" ~/.ssh/authorized_keys 2>/dev/null || '
+                f'echo "{pub_key}" >> ~/.ssh/authorized_keys'
+            )
+            _, stdout, stderr = client.exec_command(cmd, timeout=10)
+            exit_code = stdout.channel.recv_exit_status()
+            if exit_code != 0:
+                err = stderr.read().decode("utf-8", errors="replace").strip()
+                self._json_response({
+                    "success": False,
+                    "error": f"Failed to copy key: {err}",
+                })
+            else:
+                self._json_response({
+                    "success": True,
+                    "message": "SSH key copied successfully. You can now connect without a password.",
+                })
+        except Exception as exc:
+            self._json_response({
+                "success": False,
+                "error": str(exc),
+            })
+        finally:
+            client.close()
 
     def _handle_test_connection(self) -> None:
         """POST /api/setup/test-connection — test SSH connection to a host."""
@@ -1645,9 +1723,26 @@ function bindStep(stepName) {
         var pw = document.getElementById('ssh-password');
         state.testPassword = pw ? pw.value : '';
         if (!state.testPassword) { alert('Please enter the server password.'); return; }
-        goTo(3);
-        /* Auto-start the test */
-        setTimeout(function() { doTest(); }, 100);
+        var btn = document.getElementById('btn-auto-copy');
+        if (btn) { btn.disabled = true; btn.textContent = 'Copying key...'; }
+        api('POST', '/api/setup/copy-key', {
+          host: state.currentHost.host,
+          user: state.currentHost.user,
+          port: state.currentHost.port,
+          password: state.testPassword
+        }).then(function(data) {
+          if (data.success) {
+            state.testPassword = '';
+            goTo(3);
+            setTimeout(function() { doTest(); }, 100);
+          } else {
+            alert('Failed to copy key: ' + (data.error || 'Unknown error'));
+            if (btn) { btn.disabled = false; btn.textContent = 'Copy Key Automatically'; }
+          }
+        }).catch(function(e) {
+          alert('Error: ' + e.message);
+          if (btn) { btn.disabled = false; btn.textContent = 'Copy Key Automatically'; }
+        });
       });
       break;
 
@@ -4120,10 +4215,12 @@ def _build_html() -> str:
         <input type="text" id="newHostName" placeholder="Friendly name (e.g. gpu-server)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
         <input type="text" id="newHostAddr" placeholder="IP or hostname (e.g. 192.168.1.50)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
         <input type="text" id="newHostUser" placeholder="SSH username" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="password" id="newHostPassword" placeholder="SSH password (for key setup, not stored)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
         <div style="display:flex;gap:6px">
           <input type="number" id="newHostPort" placeholder="Port" value="22" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px;width:80px">
-          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Test Connection</button>
-          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Add Host</button>
+          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Test</button>
+          <button id="btnCopyKey" onclick="cpCopyKey()" style="flex:1;background:#1a2a3a;border:1px solid #2a4a6a;color:#4af;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Setup Key</button>
+          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Add</button>
         </div>
         <div id="hostActionStatus" style="font-size:11px;min-height:16px"></div>
       </div>
@@ -4413,6 +4510,29 @@ async function cpTestHost() {
   } catch(e) { setHostStatus('Error: ' + e, false); }
 }
 
+async function cpCopyKey() {
+  const host = document.getElementById('newHostAddr').value.trim();
+  const user = document.getElementById('newHostUser').value.trim();
+  const password = document.getElementById('newHostPassword').value;
+  const port = parseInt(document.getElementById('newHostPort').value) || 22;
+  if (!host || !user) { setHostStatus('Host and username required', false); return; }
+  if (!password) { setHostStatus('Password required to copy SSH key', false); return; }
+  setHostStatus('Copying SSH key...', null);
+  try {
+    const res = await fetch(API + '/api/setup/copy-key', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, user, port, password})
+    });
+    const data = await res.json();
+    if (data.success) {
+      setHostStatus('Key copied! You can now test without a password.', true);
+      document.getElementById('newHostPassword').value = '';
+    } else {
+      setHostStatus('Failed: ' + data.error, false);
+    }
+  } catch(e) { setHostStatus('Error: ' + e, false); }
+}
+
 async function cpAddHost() {
   const name = document.getElementById('newHostName').value.trim();
   const host = document.getElementById('newHostAddr').value.trim();
@@ -4430,6 +4550,7 @@ async function cpAddHost() {
       document.getElementById('newHostName').value = '';
       document.getElementById('newHostAddr').value = '';
       document.getElementById('newHostUser').value = '';
+      document.getElementById('newHostPassword').value = '';
       document.getElementById('newHostPort').value = '22';
       await loadHosts();
     } else {
