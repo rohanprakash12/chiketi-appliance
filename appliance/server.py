@@ -1852,17 +1852,33 @@ function fetchSSHKey() {
 }
 
 function fetchThemes() {
-  if (state.themes) return;
+  if (state.themes) { console.log('[setup] themes already cached'); renderStep(); return; }
   console.log('[setup] fetching themes...');
-  api('GET', '/api/setup/themes').then(function(data) {
-    console.log('[setup] themes loaded:', Object.keys(data.families || {}).length, 'families');
-    state.themes = data;
-  }).catch(function(e) {
-    console.error('[setup] themes fetch failed:', e);
-    state.themes = { families: {} };
-  }).then(function() {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', '/api/setup/themes', true);
+  xhr.onload = function() {
+    console.log('[setup] themes xhr status:', xhr.status);
+    if (xhr.status === 200) {
+      try {
+        state.themes = JSON.parse(xhr.responseText);
+        console.log('[setup] themes parsed OK, families:', Object.keys(state.themes.families || {}).length);
+      } catch(e) {
+        console.error('[setup] themes parse error:', e);
+        state.themes = { families: {} };
+      }
+    } else {
+      console.error('[setup] themes bad status:', xhr.status);
+      state.themes = { families: {} };
+    }
+    console.log('[setup] calling renderStep after themes load');
     renderStep();
-  });
+  };
+  xhr.onerror = function() {
+    console.error('[setup] themes xhr error');
+    state.themes = { families: {} };
+    renderStep();
+  };
+  xhr.send();
 }
 
 function doFullConnect() {
