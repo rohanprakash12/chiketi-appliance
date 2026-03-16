@@ -216,11 +216,13 @@ def _get_or_generate_pubkey() -> str | None:
     # Generate a new key
     os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
 
-    # Try ed25519 first, fall back to RSA
-    for gen_func, gen_path, gen_args in [
-        (paramiko.Ed25519Key.generate, ed25519_path, {}),
-        (paramiko.RSAKey.generate, rsa_path, {"bits": 4096}),
-    ]:
+    # Build list of generators — ed25519 only if .generate exists
+    generators = []
+    if hasattr(paramiko.Ed25519Key, "generate"):
+        generators.append((paramiko.Ed25519Key.generate, ed25519_path, {}))
+    generators.append((paramiko.RSAKey.generate, rsa_path, {"bits": 4096}))
+
+    for gen_func, gen_path, gen_args in generators:
         try:
             key = gen_func(**gen_args)
             key.write_private_key_file(gen_path)
