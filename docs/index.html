@@ -1,0 +1,1543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHIKETI APPLIANCE // Remote Monitoring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Antonio:wght@400;700&family=Chakra+Petch:wght@400;600;700&family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: #000;
+  color: #cccccc;
+  font-family: 'Share Tech Mono', monospace;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+::selection { background: #FDCD06; color: #000; }
+
+/* ═══════════════════════════════════════════════════
+   SCANLINE OVERLAY (global CRT effect)
+   ═══════════════════════════════════════════════════ */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ═══════════════════════════════════════════════════
+   SCREEN FLICKER
+   ═══════════════════════════════════════════════════ */
+@keyframes flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.95; }
+  99% { opacity: 0.98; }
+}
+body { animation: flicker 8s infinite; }
+
+/* ═══════════════════════════════════════════════════
+   LAYOUT SHELL — the entire page is a "rack"
+   ═══════════════════════════════════════════════════ */
+.rack {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px 16px 60px;
+}
+
+/* ═══════════════════════════════════════════════════
+   BOOT SEQUENCE HEADER
+   ═══════════════════════════════════════════════════ */
+.boot-sequence {
+  border: 1px solid #333;
+  padding: 24px 28px;
+  margin-bottom: 6px;
+  position: relative;
+  background: linear-gradient(180deg, #0a0a0a 0%, #000 100%);
+}
+.boot-sequence::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 4px; height: 100%;
+  background: #FDCD06;
+  box-shadow: 0 0 12px #FDCD06, 0 0 30px rgba(253,205,6,0.3);
+}
+.boot-line {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px;
+  color: #556;
+  line-height: 1.7;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.boot-line.active { color: #00FFCC; }
+.boot-line .ok { color: #33ff33; }
+.boot-line .warn { color: #FFB000; }
+.boot-line .val { color: #FDCD06; }
+
+/* title */
+.system-title {
+  margin-top: 20px;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.system-title h1 {
+  font-family: 'Antonio', sans-serif;
+  font-size: clamp(40px, 8vw, 76px);
+  font-weight: 700;
+  letter-spacing: 8px;
+  color: #FDCD06;
+  text-shadow: 0 0 20px rgba(253,205,6,0.5), 0 0 60px rgba(253,205,6,0.2);
+  line-height: 1;
+}
+.system-title .version {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 14px;
+  color: #556;
+  align-self: flex-end;
+  padding-bottom: 8px;
+}
+
+/* subtitle readout */
+.sys-desc {
+  margin-top: 14px;
+  font-size: 14px;
+  color: #8899aa;
+  border-top: 1px solid #222;
+  padding-top: 12px;
+  line-height: 1.6;
+}
+.sys-desc strong { color: #FDCD06; font-weight: 400; }
+
+/* status LEDs row */
+.status-leds {
+  display: flex;
+  gap: 18px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.led {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #667;
+}
+.led::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.led.green::before { background: #33ff33; box-shadow: 0 0 6px #33ff33; }
+.led.amber::before { background: #FFB000; box-shadow: 0 0 6px #FFB000; animation: pulse-led 2s infinite; }
+.led.cyan::before { background: #00FFCC; box-shadow: 0 0 6px #00FFCC; }
+.led.red::before { background: #ff4444; box-shadow: 0 0 6px #ff4444; animation: pulse-led 1s infinite; }
+
+@keyframes pulse-led {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ═══════════════════════════════════════════════════
+   SECTION BEZEL — rack-panel look
+   ═══════════════════════════════════════════════════ */
+.bezel {
+  border: 1px solid #2a2a2a;
+  margin-top: 6px;
+  background: #050505;
+  position: relative;
+  overflow: hidden;
+}
+.bezel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  background: #0a0a0a;
+}
+.bezel-header .label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.bezel-header .status {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.bezel-body { padding: 20px; }
+
+/* per-section accent coloring via data attr */
+.bezel[data-accent="gold"] { border-color: #3a3000; }
+.bezel[data-accent="gold"] .bezel-header { border-bottom-color: #3a3000; }
+.bezel[data-accent="gold"] .bezel-header .label { color: #FDCD06; }
+.bezel[data-accent="gold"] .bezel-header .status { color: #FF8800; }
+
+.bezel[data-accent="teal"] { border-color: #1a3a35; }
+.bezel[data-accent="teal"] .bezel-header { border-bottom-color: #1a3a35; }
+.bezel[data-accent="teal"] .bezel-header .label { color: #2A9D8F; }
+.bezel[data-accent="teal"] .bezel-header .status { color: #99CCCC; }
+
+.bezel[data-accent="coral"] { border-color: #3a1a2a; }
+.bezel[data-accent="coral"] .bezel-header { border-bottom-color: #3a1a2a; }
+.bezel[data-accent="coral"] .bezel-header .label { color: #FFCC66; }
+.bezel[data-accent="coral"] .bezel-header .status { color: #CC99CC; }
+
+.bezel[data-accent="vfd"] { border-color: #1a2a20; }
+.bezel[data-accent="vfd"] .bezel-header { border-bottom-color: #1a2a20; }
+.bezel[data-accent="vfd"] .bezel-header .label { color: #00DDAA; }
+.bezel[data-accent="vfd"] .bezel-header .status { color: #00FFCC; }
+
+.bezel[data-accent="tube"] { border-color: #332820; }
+.bezel[data-accent="tube"] .bezel-header { border-bottom-color: #332820; }
+.bezel[data-accent="tube"] .bezel-header .label { color: #FF8833; }
+.bezel[data-accent="tube"] .bezel-header .status { color: #FF6E0B; }
+
+.bezel[data-accent="term"] { border-color: #003300; }
+.bezel[data-accent="term"] .bezel-header { border-bottom-color: #003300; }
+.bezel[data-accent="term"] .bezel-header .label { color: #00ff41; }
+.bezel[data-accent="term"] .bezel-header .status { color: #33ff33; }
+
+.bezel[data-accent="cyan"] { border-color: #1a3a4a; }
+.bezel[data-accent="cyan"] .bezel-header { border-bottom-color: #1a3a4a; }
+.bezel[data-accent="cyan"] .bezel-header .label { color: #00e5ff; }
+.bezel[data-accent="cyan"] .bezel-header .status { color: #66ccff; }
+
+/* ═══════════════════════════════════════════════════
+   SSH TOPOLOGY DIAGRAM — Pi → remote hosts
+   ═══════════════════════════════════════════════════ */
+.topology {
+  display: grid;
+  grid-template-columns: minmax(220px,1fr) auto minmax(220px,1.2fr);
+  gap: 16px;
+  align-items: center;
+}
+@media (max-width: 720px) {
+  .topology { grid-template-columns: 1fr; }
+  .topology .link-col { transform: rotate(90deg); height: 60px; }
+}
+.node {
+  border: 1px solid #2a2a2a;
+  background: #080808;
+  padding: 16px;
+  position: relative;
+}
+.node.pi { border-color: #3a3000; }
+.node .node-title {
+  font-family: 'Antonio', sans-serif;
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: #FDCD06;
+  margin-bottom: 4px;
+}
+.node .node-sub {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #556;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.node .node-line {
+  font-size: 11px;
+  color: #778;
+  line-height: 1.8;
+}
+.node .node-line .tag { color: #00FFCC; }
+.remote-stack { display: flex; flex-direction: column; gap: 8px; }
+.remote-box {
+  border: 1px solid #1a3a4a;
+  background: #060c10;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #88aabb;
+}
+.remote-box .rb-name { color: #00e5ff; letter-spacing: 1px; }
+.remote-box .rb-meta { font-size: 10px; color: #445; margin-top: 2px; }
+.remote-box .rb-bare {
+  font-size: 9px;
+  color: #33ff33;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.link-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #33ff33;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.link-col .ssh-wire {
+  width: 100%;
+  min-width: 60px;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, #33ff33 0 8px, transparent 8px 14px);
+  position: relative;
+  animation: wire-flow 1.2s linear infinite;
+}
+@keyframes wire-flow {
+  to { background-position: 14px 0; }
+}
+.link-col .ssh-label {
+  color: #33ff33;
+  text-shadow: 0 0 6px rgba(51,255,51,0.5);
+}
+
+/* ═══════════════════════════════════════════════════
+   THEME SHOWCASE — the selector interface
+   ═══════════════════════════════════════════════════ */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 12px;
+}
+
+.theme-card {
+  border: 1px solid #222;
+  padding: 16px;
+  position: relative;
+  cursor: default;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.theme-card:hover {
+  border-color: var(--tc-accent);
+  box-shadow: 0 0 20px var(--tc-glow);
+}
+.theme-card-name {
+  font-family: var(--tc-font);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--tc-accent);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.theme-card-family {
+  font-size: 10px;
+  color: #556;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* Mini dashboard preview inside each card */
+.mini-dash {
+  background: var(--tc-bg);
+  border: 1px solid var(--tc-border);
+  padding: 12px;
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  position: relative;
+}
+/* scanline effect on vintage cards */
+.mini-dash.scanlined::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0.15) 2px);
+  pointer-events: none;
+}
+
+/* donut gauge mini */
+.mini-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.mini-gauge svg { width: 48px; height: 48px; }
+.mini-gauge .gauge-label {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--tc-dim);
+  text-transform: uppercase;
+}
+.mini-gauge .gauge-val {
+  font-family: var(--tc-font);
+  font-size: 12px;
+  color: var(--tc-accent);
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════
+   DONUT GAUGE ANIMATION
+   ═══════════════════════════════════════════════════ */
+@keyframes gauge-fill {
+  from { stroke-dashoffset: 113; }
+}
+.gauge-ring {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.gauge-bg { stroke: #1a1a1a; }
+.gauge-fg { animation: gauge-fill 2s ease-out forwards; }
+
+/* ═══════════════════════════════════════════════════
+   SYSTEM READOUTS — the "what it monitors" section
+   ═══════════════════════════════════════════════════ */
+.readout-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2px;
+}
+.readout-cell {
+  background: #080808;
+  border-left: 3px solid var(--rc-color, #333);
+  padding: 14px 16px;
+  transition: background 0.2s;
+}
+.readout-cell:hover { background: #0e0e0e; }
+.readout-label {
+  font-size: 10px;
+  color: #556;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.readout-value {
+  font-family: 'Antonio', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--rc-color, #ccc);
+  line-height: 1;
+}
+.readout-unit {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: #556;
+  margin-top: 4px;
+}
+.readout-bar {
+  margin-top: 8px;
+  height: 3px;
+  background: #1a1a1a;
+  position: relative;
+  overflow: hidden;
+}
+.readout-bar-fill {
+  height: 100%;
+  background: var(--rc-color, #555);
+  box-shadow: 0 0 8px var(--rc-color, #555);
+  animation: bar-grow 2.5s ease-out forwards;
+  transform-origin: left;
+}
+@keyframes bar-grow {
+  from { transform: scaleX(0); }
+}
+
+/* spinning fan */
+@keyframes spin-fan { to { transform: rotate(360deg); } }
+.fan-icon {
+  display: inline-block;
+  animation: spin-fan 1.5s linear infinite;
+  color: var(--rc-color, #ccc);
+}
+
+/* ═══════════════════════════════════════════════════
+   TERMINAL INSTALL BLOCK
+   ═══════════════════════════════════════════════════ */
+.terminal {
+  background: #0a0a0a;
+  border: 1px solid #222;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px;
+  overflow: hidden;
+}
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #111;
+  border-bottom: 1px solid #222;
+}
+.terminal-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+.terminal-dot:nth-child(1) { background: #ff5f57; }
+.terminal-dot:nth-child(2) { background: #ffbd2e; }
+.terminal-dot:nth-child(3) { background: #28c941; }
+.terminal-bar span {
+  margin-left: 8px;
+  font-size: 11px;
+  color: #556;
+  letter-spacing: 1px;
+}
+.terminal-body {
+  padding: 16px 18px;
+  line-height: 1.8;
+}
+.terminal-body .prompt { color: #33ff33; }
+.terminal-body .cmd { color: #ccc; }
+.terminal-body .comment { color: #444; }
+.terminal-body .url { color: #FDCD06; }
+.terminal-body .output { color: #556; }
+
+.copy-btn {
+  background: none;
+  border: 1px solid #333;
+  color: #667;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  padding: 4px 12px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  margin-left: auto;
+}
+.copy-btn:hover { border-color: #33ff33; color: #33ff33; }
+.copy-btn.copied { border-color: #33ff33; color: #33ff33; }
+
+/* ═══════════════════════════════════════════════════
+   SETUP WIZARD VISUAL
+   ═══════════════════════════════════════════════════ */
+.wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2px;
+}
+.wizard-step {
+  background: #080808;
+  border-top: 2px solid #1a3a4a;
+  padding: 14px 16px;
+  position: relative;
+}
+.wizard-step .ws-num {
+  font-family: 'Antonio', sans-serif;
+  font-size: 22px;
+  color: #00e5ff;
+  text-shadow: 0 0 10px rgba(0,229,255,0.4);
+  line-height: 1;
+}
+.wizard-step .ws-title {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #aab;
+  margin-top: 8px;
+}
+.wizard-step .ws-desc {
+  font-size: 11px;
+  color: #667;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════
+   CONTROL PANEL VISUAL
+   ═══════════════════════════════════════════════════ */
+.ctrl-panel-visual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+@media (max-width: 600px) {
+  .ctrl-panel-visual { grid-template-columns: 1fr; }
+}
+.ctrl-block {
+  background: #080808;
+  padding: 16px;
+  position: relative;
+}
+.ctrl-block-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #445;
+  margin-bottom: 10px;
+}
+.ctrl-theme-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ctrl-chip {
+  font-size: 10px;
+  padding: 3px 10px;
+  border: 1px solid #222;
+  color: #667;
+  letter-spacing: 1px;
+  cursor: default;
+  transition: all 0.3s;
+}
+.ctrl-chip:hover {
+  border-color: var(--chip-color, #555);
+  color: var(--chip-color, #aaa);
+  box-shadow: 0 0 10px var(--chip-glow, transparent);
+}
+.ctrl-chip.active {
+  border-color: var(--chip-color, #555);
+  color: var(--chip-color, #aaa);
+  background: rgba(255,255,255,0.03);
+}
+
+/* host selector list */
+.host-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid #222;
+  margin-bottom: 6px;
+  cursor: default;
+  transition: all 0.3s;
+}
+.host-row:hover { border-color: #1a3a4a; }
+.host-row.active { border-color: #00e5ff; background: rgba(0,229,255,0.04); }
+.host-row .h-led {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.host-row .h-led.on { background: #33ff33; box-shadow: 0 0 6px #33ff33; }
+.host-row .h-led.off { background: #ff4444; box-shadow: 0 0 6px #ff4444; }
+.host-row .h-name { font-size: 12px; color: #aab; letter-spacing: 1px; flex: 1; }
+.host-row .h-lat { font-size: 10px; color: #556; }
+
+/* port indicator */
+.port-display {
+  font-family: 'Antonio', sans-serif;
+  font-size: 42px;
+  font-weight: 700;
+  color: #FDCD06;
+  text-shadow: 0 0 15px rgba(253,205,6,0.4);
+  line-height: 1;
+}
+.port-label {
+  font-size: 10px;
+  color: #445;
+  letter-spacing: 2px;
+  margin-top: 4px;
+}
+
+/* kiosk indicator */
+.kiosk-vis {
+  width: 100%;
+  aspect-ratio: 16/10;
+  border: 2px solid #2a2a2a;
+  background: #000;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.kiosk-vis::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,200,0.02) 2px, rgba(0,255,200,0.02) 4px);
+  pointer-events: none;
+}
+.kiosk-inner {
+  text-align: center;
+}
+.kiosk-inner .k-title {
+  font-family: 'Antonio', sans-serif;
+  font-size: 14px;
+  color: #FDCD06;
+  letter-spacing: 3px;
+}
+.kiosk-inner .k-res {
+  font-size: 10px;
+  color: #334;
+  margin-top: 4px;
+}
+.kiosk-gauges {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: center;
+}
+.kiosk-gauges svg { width: 24px; height: 24px; }
+
+/* ═══════════════════════════════════════════════════
+   GITHUB LINK / FOOTER
+   ═══════════════════════════════════════════════════ */
+.footer-strip {
+  margin-top: 6px;
+  border: 1px solid #1a1a1a;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #050505;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.footer-strip a {
+  color: #FDCD06;
+  text-decoration: none;
+  font-size: 13px;
+  letter-spacing: 1px;
+  border: 1px solid #3a3000;
+  padding: 6px 16px;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.footer-strip a:hover {
+  background: rgba(253,205,6,0.08);
+  box-shadow: 0 0 15px rgba(253,205,6,0.15);
+}
+.footer-strip .sig {
+  font-size: 11px;
+  color: #334;
+  letter-spacing: 1px;
+}
+
+/* ═══════════════════════════════════════════════════
+   TYPING CURSOR
+   ═══════════════════════════════════════════════════ */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  background: #33ff33;
+  vertical-align: text-bottom;
+  animation: blink-cursor 1s step-end infinite;
+}
+
+/* ═══════════════════════════════════════════════════
+   NIXIE DIGIT EFFECT (for port number)
+   ═══════════════════════════════════════════════════ */
+@keyframes nixie-glow {
+  0%, 100% { text-shadow: 0 0 10px rgba(255,136,51,0.6), 0 0 30px rgba(255,136,51,0.3); }
+  50% { text-shadow: 0 0 15px rgba(255,136,51,0.8), 0 0 40px rgba(255,136,51,0.4); }
+}
+.nixie {
+  font-family: 'Antonio', sans-serif;
+  color: #FF8833;
+  animation: nixie-glow 3s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════ */
+@media (max-width: 700px) {
+  .theme-grid { grid-template-columns: 1fr; }
+  .readout-grid { grid-template-columns: 1fr 1fr; }
+  .boot-line { font-size: 11px; }
+  .system-title h1 { letter-spacing: 4px; }
+}
+@media (max-width: 420px) {
+  .readout-grid { grid-template-columns: 1fr; }
+  .rack { padding: 10px 8px 40px; }
+}
+
+/* ═══════════════════════════════════════════════════
+   VFD text glow
+   ═══════════════════════════════════════════════════ */
+.vfd-text {
+  color: #00DDAA;
+  text-shadow: 0 0 8px rgba(0,221,170,0.6), 0 0 20px rgba(0,221,170,0.3);
+}
+.tube-text {
+  color: #FF8833;
+  text-shadow: 0 0 8px rgba(255,136,51,0.6), 0 0 20px rgba(255,136,51,0.3);
+}
+.scan-text {
+  color: #00FFCC;
+  text-shadow: 0 0 8px rgba(0,255,204,0.6), 0 0 20px rgba(0,255,204,0.3);
+}
+.gold-text {
+  color: #FDCD06;
+  text-shadow: 0 0 8px rgba(253,205,6,0.5), 0 0 20px rgba(253,205,6,0.2);
+}
+.hacker-text {
+  color: #00ff41;
+  text-shadow: 0 0 8px rgba(0,255,65,0.5), 0 0 20px rgba(0,255,65,0.2);
+}
+
+/* ═══════════════════════════════════════════════════
+   THEME FAMILY SEPARATOR
+   ═══════════════════════════════════════════════════ */
+.family-sep {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #334;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid #1a1a1a;
+  margin-bottom: 12px;
+}
+
+/* terminal theme mini bars */
+.ascii-bar {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tc-accent);
+}
+.ascii-dim { opacity: 0.2; }
+</style>
+</head>
+<body>
+
+<div class="rack">
+
+  <!-- ═══════════════════════════════════════════
+       BOOT SEQUENCE / HEADER
+       ═══════════════════════════════════════════ -->
+  <div class="boot-sequence">
+    <div class="boot-line" id="boot-1">BIOS POST ............... <span class="ok">[OK]</span></div>
+    <div class="boot-line" id="boot-2">SSH ENGINE INIT ......... PARAMIKO KEY-AUTH POOL <span class="ok">[ONLINE]</span></div>
+    <div class="boot-line" id="boot-3">REMOTE COLLECTORS ....... CPU MEM DISK NET GPU TEMP FAN <span class="ok">[7 CHANNELS]</span></div>
+    <div class="boot-line" id="boot-4">HOST REGISTRY ........... <span class="val">MULTI-HOST</span> SWITCH + AUTO-ROTATE <span class="ok">[ARMED]</span></div>
+    <div class="boot-line active" id="boot-5">HTTP SERVER ............. PORT <span class="val">7777</span> SETUP WIZARD <span class="ok">[LISTENING]</span></div>
+    <div class="boot-line" id="boot-6">THEME ENGINE ............ <span class="val">12 THEMES</span> LOADED / 3 FAMILIES <span class="ok">[READY]</span></div>
+
+    <div class="system-title">
+      <h1>CHIKETI APPLIANCE</h1>
+      <span class="version">v0.1 // REMOTE MONITOR</span>
+    </div>
+
+    <div class="sys-desc">
+      <strong>A RASPBERRY PI THAT MONITORS YOUR SERVERS.</strong>
+      SSH in, pull stats, and display them on a beautiful kiosk dashboard &mdash;
+      with <strong>nothing installed</strong> on the servers themselves.
+      Watch one box or many: CPU, memory, disk, network, GPU, temperatures, and fans,
+      all over read-only SSH. Companion to <strong>chiketi</strong> (which monitors the local machine).
+    </div>
+
+    <div class="status-leds">
+      <span class="led green">Agentless / SSH</span>
+      <span class="led cyan">Setup Wizard</span>
+      <span class="led green">Multi-Host</span>
+      <span class="led amber">HTTP :7777</span>
+      <span class="led green">Pi Kiosk</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       SSH TOPOLOGY
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="cyan">
+    <div class="bezel-header">
+      <span class="label">Topology // Agentless Over SSH</span>
+      <span class="status">Nothing To Install On Servers</span>
+    </div>
+    <div class="bezel-body">
+      <div class="topology">
+
+        <div class="node pi">
+          <div class="node-title">RASPBERRY PI 3+</div>
+          <div class="node-sub">chiketi-appliance</div>
+          <div class="node-line"><span class="tag">&#9656;</span> SSH collectors (paramiko)</div>
+          <div class="node-line"><span class="tag">&#9656;</span> Metric engine &middot; aggregates</div>
+          <div class="node-line"><span class="tag">&#9656;</span> HTTP :7777 themes + API</div>
+          <div class="node-line"><span class="tag">&#9656;</span> Chromium kiosk on HDMI</div>
+        </div>
+
+        <div class="link-col">
+          <div class="ssh-label">SSH</div>
+          <div class="ssh-wire"></div>
+          <div class="ssh-wire"></div>
+          <div class="ssh-wire"></div>
+          <div style="color:#445;font-size:9px;letter-spacing:1px;">READ-ONLY</div>
+        </div>
+
+        <div class="remote-stack">
+          <div class="remote-box">
+            <div class="rb-name">gpu-server</div>
+            <div class="rb-meta">192.168.1.50 &middot; any Linux box</div>
+            <div class="rb-bare">&#9679; no agent &middot; just sshd</div>
+          </div>
+          <div class="remote-box">
+            <div class="rb-name">web-server</div>
+            <div class="rb-meta">192.168.1.51 &middot; any Linux box</div>
+            <div class="rb-bare">&#9679; no agent &middot; just sshd</div>
+          </div>
+          <div class="remote-box">
+            <div class="rb-name">nas</div>
+            <div class="rb-meta">192.168.1.52 &middot; any Linux box</div>
+            <div class="rb-bare">&#9679; no agent &middot; just sshd</div>
+          </div>
+        </div>
+
+      </div>
+      <div style="margin-top:16px;font-size:12px;color:#667;line-height:1.7;border-top:1px solid #1a1a1a;padding-top:12px;">
+        The appliance SSHes into each server and runs standard read-only commands
+        (<span style="color:#00e5ff">/proc/stat</span>, <span style="color:#00e5ff">free</span>,
+        <span style="color:#00e5ff">df</span>, <span style="color:#00e5ff">nvidia-smi</span>, &hellip;)
+        in a single roundtrip per host every 1.5s. No root, no daemon, no package to install on the remote.
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       SETUP WIZARD
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="teal">
+    <div class="bezel-header">
+      <span class="label">Setup Wizard // First Run</span>
+      <span class="status">No YAML, No Terminal</span>
+    </div>
+    <div class="bezel-body" style="padding:2px;">
+      <div class="wizard-steps">
+        <div class="wizard-step">
+          <div class="ws-num">01</div>
+          <div class="ws-title">Add a Server</div>
+          <div class="ws-desc">Enter IP, username, and port in the browser.</div>
+        </div>
+        <div class="wizard-step">
+          <div class="ws-num">02</div>
+          <div class="ws-title">SSH Key</div>
+          <div class="ws-desc">Appliance generates a key and shows how to add it.</div>
+        </div>
+        <div class="wizard-step">
+          <div class="ws-num">03</div>
+          <div class="ws-title">Test Connection</div>
+          <div class="ws-desc">Verifies SSH, shows hostname and uptime.</div>
+        </div>
+        <div class="wizard-step">
+          <div class="ws-num">04</div>
+          <div class="ws-title">Add More Hosts</div>
+          <div class="ws-desc">Repeat for every server you want to watch.</div>
+        </div>
+        <div class="wizard-step">
+          <div class="ws-num">05</div>
+          <div class="ws-title">Pick a Theme</div>
+          <div class="ws-desc">12 themes across 3 families.</div>
+        </div>
+        <div class="wizard-step">
+          <div class="ws-num">06</div>
+          <div class="ws-title">Start Monitoring</div>
+          <div class="ws-desc">Saves config, launches the dashboard.</div>
+        </div>
+      </div>
+      <div style="padding:14px 16px;font-size:12px;color:#667;line-height:1.7;border-top:1px solid #1a1a1a;">
+        On first launch (no config file), open
+        <span style="color:#2A9D8F">http://&lt;pi-ip&gt;:7777/</span> on your phone or laptop
+        and walk through it. Everything happens through the browser.
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       THEME SHOWCASE
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="gold">
+    <div class="bezel-header">
+      <span class="label">Theme Interface // 3 Families / 12 Variants</span>
+      <span class="status">Same Themes As Chiketi</span>
+    </div>
+    <div class="bezel-body">
+
+      <!-- PANEL FAMILY -->
+      <div class="family-sep">Panel Themes &mdash; Sci-Fi Control Surfaces</div>
+      <div class="theme-grid" style="margin-bottom:20px;">
+
+        <!-- Gold -->
+        <div class="theme-card" style="--tc-accent:#FDCD06;--tc-glow:rgba(253,205,6,0.15);--tc-bg:#000;--tc-border:#3a3000;--tc-dim:#888;--tc-font:'Chakra Petch',sans-serif;">
+          <div class="theme-card-name" style="font-family:'Chakra Petch',sans-serif;">Gold</div>
+          <div class="theme-card-family">Panel Family &middot; Anticlockwise Donuts</div>
+          <div class="mini-dash">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a1a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FDCD06" stroke-dasharray="60 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #FDCD06)"/></svg>
+              <span class="gauge-label">CPU</span>
+              <span class="gauge-val">47%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a1a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FF8800" stroke-dasharray="76 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #FF8800)"/></svg>
+              <span class="gauge-label">RAM</span>
+              <span class="gauge-val">67%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a1a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#BF0F0F" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #BF0F0F)"/></svg>
+              <span class="gauge-label">SSD</span>
+              <span class="gauge-val">47%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coral -->
+        <div class="theme-card" style="--tc-accent:#FFCC66;--tc-glow:rgba(255,204,102,0.15);--tc-bg:#000;--tc-border:#1a1a2a;--tc-dim:#CC99CC;--tc-font:'Antonio',sans-serif;">
+          <div class="theme-card-name" style="font-family:'Antonio',sans-serif;">Coral</div>
+          <div class="theme-card-family">Panel Family &middot; Pill Headers</div>
+          <div class="mini-dash">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a2a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FFCC66" stroke-dasharray="47 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #FFCC66)"/></svg>
+              <span class="gauge-label" style="color:#CC99CC">CPU</span>
+              <span class="gauge-val" style="color:#FFCC66">15%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a2a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FF9933" stroke-dasharray="64 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #FF9933)"/></svg>
+              <span class="gauge-label" style="color:#CC99CC">RAM</span>
+              <span class="gauge-val" style="color:#FFCC66">57%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#1a1a2a"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FF2200" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #FF2200)"/></svg>
+              <span class="gauge-label" style="color:#CC99CC">SSD</span>
+              <span class="gauge-val" style="color:#FFCC66">47%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Teal -->
+        <div class="theme-card" style="--tc-accent:#2A9D8F;--tc-glow:rgba(42,157,143,0.15);--tc-bg:#111419;--tc-border:#2F3749;--tc-dim:#6D748C;--tc-font:'Rajdhani',sans-serif;">
+          <div class="theme-card-name" style="font-family:'Rajdhani',sans-serif;">Teal</div>
+          <div class="theme-card-family">Panel Family &middot; Angular Headers</div>
+          <div class="mini-dash" style="background:#111419">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#2F3749"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#2A9D8F" stroke-dasharray="49 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #2A9D8F)"/></svg>
+              <span class="gauge-label" style="color:#6D748C">CPU</span>
+              <span class="gauge-val" style="color:#2A9D8F">43%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#2F3749"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#E7442A" stroke-dasharray="68 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #E7442A)"/></svg>
+              <span class="gauge-label" style="color:#6D748C">RAM</span>
+              <span class="gauge-val" style="color:#2A9D8F">60%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#2F3749"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#99CCCC" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 3px #99CCCC)"/></svg>
+              <span class="gauge-label" style="color:#6D748C">SSD</span>
+              <span class="gauge-val" style="color:#2A9D8F">47%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TERMINAL FAMILY -->
+      <div class="family-sep">Terminal Themes &mdash; Retro CRT Readouts (6 Variants)</div>
+      <div class="theme-grid" style="margin-bottom:20px;">
+
+        <!-- Hacker -->
+        <div class="theme-card" style="--tc-accent:#00ff41;--tc-glow:rgba(0,255,65,0.12);--tc-bg:#0a0a0a;--tc-border:#333;--tc-dim:#555;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name">Hacker</div>
+          <div class="theme-card-family">Terminal Family &middot; Green</div>
+          <div class="mini-dash" style="background:#0a0a0a;border-color:#333;display:block;padding:10px 12px;">
+            <div class="ascii-bar">CPU [<span style="color:#00ff41">||||||||||||</span><span class="ascii-dim">||||||||</span>] 60%</div>
+            <div class="ascii-bar">MEM [<span style="color:#00ff41">|||||||||||||||||</span><span class="ascii-dim">|||</span>] 85%</div>
+            <div class="ascii-bar">DSK [<span style="color:#ffb000">|||||||||</span><span class="ascii-dim">|||||||||||</span>] 47%</div>
+            <div class="ascii-bar">GPU [<span style="color:#ff3333">||||||||||||||</span><span class="ascii-dim">||||||</span>] 72%</div>
+          </div>
+        </div>
+
+        <!-- Cyan -->
+        <div class="theme-card" style="--tc-accent:#00e5ff;--tc-glow:rgba(0,229,255,0.12);--tc-bg:#0a1520;--tc-border:#1a3a4a;--tc-dim:#4a6a7a;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name" style="color:#00e5ff">Cyan</div>
+          <div class="theme-card-family">Terminal Family &middot; Blue-Green</div>
+          <div class="mini-dash" style="background:#0a1520;border-color:#1a3a4a;display:block;padding:10px 12px;">
+            <div class="ascii-bar" style="color:#00e5ff">CPU [<span>||||||||||||</span><span class="ascii-dim">||||||||</span>] 60%</div>
+            <div class="ascii-bar" style="color:#00e5ff">MEM [<span>|||||||||||||||||</span><span class="ascii-dim">|||</span>] 85%</div>
+            <div class="ascii-bar" style="color:#ffb000">DSK [<span>|||||||||</span><span class="ascii-dim">|||||||||||</span>] 47%</div>
+            <div class="ascii-bar" style="color:#ff3333">GPU [<span>||||||||||||||</span><span class="ascii-dim">||||||</span>] 72%</div>
+          </div>
+        </div>
+
+        <!-- Amber -->
+        <div class="theme-card" style="--tc-accent:#ffb000;--tc-glow:rgba(255,176,0,0.12);--tc-bg:#0a0a00;--tc-border:#3a3a1a;--tc-dim:#6a6a3a;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name" style="color:#ffb000">Amber</div>
+          <div class="theme-card-family">Terminal Family &middot; Amber CRT</div>
+          <div class="mini-dash" style="background:#0a0a00;border-color:#3a3a1a;display:block;padding:10px 12px;">
+            <div class="ascii-bar" style="color:#ffb000">CPU [<span>||||||||||||</span><span class="ascii-dim">||||||||</span>] 60%</div>
+            <div class="ascii-bar" style="color:#ffb000">MEM [<span>|||||||||||||||||</span><span class="ascii-dim">|||</span>] 85%</div>
+            <div class="ascii-bar" style="color:#ff6600">DSK [<span>|||||||||</span><span class="ascii-dim">|||||||||||</span>] 47%</div>
+            <div class="ascii-bar" style="color:#ff3333">GPU [<span>||||||||||||||</span><span class="ascii-dim">||||||</span>] 72%</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:#556;letter-spacing:1px;margin:-8px 0 20px;">
+        Plus three more terminal variants: <span style="color:#33ff33">phosphor</span>,
+        <span style="color:#ff4444">red_alert</span>, and <span style="color:#4488ff">blue</span>.
+      </div>
+
+      <!-- VINTAGE FAMILY -->
+      <div class="family-sep">Vintage Themes &mdash; Phosphor / Vacuum / Filament</div>
+      <div class="theme-grid">
+
+        <!-- Scanlines -->
+        <div class="theme-card" style="--tc-accent:#00FFCC;--tc-glow:rgba(0,255,204,0.15);--tc-bg:#060810;--tc-border:#334455;--tc-dim:#334455;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name scan-text">Scanlines</div>
+          <div class="theme-card-family">Vintage Family &middot; CRT Green</div>
+          <div class="mini-dash scanlined" style="background:#060810;border-color:#334455">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#0C1018"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#00FFCC" stroke-dasharray="45 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 4px #00FFCC)"/></svg>
+              <span class="gauge-label" style="color:#334455">CPU</span>
+              <span class="gauge-val scan-text">28%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#0C1018"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FFAA00" stroke-dasharray="64 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 4px #FFAA00)"/></svg>
+              <span class="gauge-label" style="color:#334455">RAM</span>
+              <span class="gauge-val" style="color:#FFAA00;text-shadow:0 0 8px rgba(255,170,0,0.6)">57%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#0C1018"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#00FFCC" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 4px #00FFCC)"/></svg>
+              <span class="gauge-label" style="color:#334455">SSD</span>
+              <span class="gauge-val scan-text">47%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- VFD -->
+        <div class="theme-card" style="--tc-accent:#00DDAA;--tc-glow:rgba(0,221,170,0.15);--tc-bg:#0A0A08;--tc-border:#1a1a16;--tc-dim:#556655;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name vfd-text">VFD</div>
+          <div class="theme-card-family">Vintage Family &middot; Vacuum Fluorescent</div>
+          <div class="mini-dash scanlined" style="background:#0A0A08;border-color:#1a1a16">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#111"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#00DDAA" stroke-dasharray="54 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #00DDAA)"/></svg>
+              <span class="gauge-label" style="color:#556655">CPU</span>
+              <span class="gauge-val vfd-text">48%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#111"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FFAA22" stroke-dasharray="76 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #FFAA22)"/></svg>
+              <span class="gauge-label" style="color:#556655">RAM</span>
+              <span class="gauge-val" style="color:#FFAA22;text-shadow:0 0 8px rgba(255,170,34,0.6)">67%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#111"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#00DDAA" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #00DDAA)"/></svg>
+              <span class="gauge-label" style="color:#556655">SSD</span>
+              <span class="gauge-val vfd-text">47%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tubes -->
+        <div class="theme-card" style="--tc-accent:#FF8833;--tc-glow:rgba(255,136,51,0.15);--tc-bg:#0A0806;--tc-border:#332820;--tc-dim:#2A1E14;--tc-font:'Share Tech Mono',monospace;">
+          <div class="theme-card-name tube-text">Tubes</div>
+          <div class="theme-card-family">Vintage Family &middot; Nixie Filament</div>
+          <div class="mini-dash scanlined" style="background:#0A0806;border-color:#332820">
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#181210"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FF8833" stroke-dasharray="40 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #FF8833)"/></svg>
+              <span class="gauge-label" style="color:#665544">CPU</span>
+              <span class="gauge-val tube-text">16%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#181210"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#33ff33" stroke-dasharray="75 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #33ff33)"/></svg>
+              <span class="gauge-label" style="color:#665544">RAM</span>
+              <span class="gauge-val" style="color:#33ff33;text-shadow:0 0 8px rgba(51,255,51,0.5)">66%</span>
+            </div>
+            <div class="mini-gauge">
+              <svg viewBox="0 0 40 40"><circle class="gauge-ring gauge-bg" cx="20" cy="20" r="16" stroke="#181210"/><circle class="gauge-ring gauge-fg" cx="20" cy="20" r="16" stroke="#FF6E0B" stroke-dasharray="53 113" stroke-dashoffset="113" transform="rotate(-90 20 20)" style="filter:drop-shadow(0 0 5px #FF6E0B)"/></svg>
+              <span class="gauge-label" style="color:#665544">SSD</span>
+              <span class="gauge-val tube-text">47%</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       SYSTEM READOUTS (what it monitors)
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="vfd">
+    <div class="bezel-header">
+      <span class="label">Telemetry Channels // Per Remote Host</span>
+      <span class="status">Pulled Over SSH</span>
+    </div>
+    <div class="bezel-body" style="padding:2px;">
+      <div class="readout-grid">
+
+        <div class="readout-cell" style="--rc-color:#00ff41">
+          <div class="readout-label">Processor</div>
+          <div class="readout-value">47<span style="font-size:16px">%</span></div>
+          <div class="readout-unit">Usage / per-core / model / cores</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:47%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#00e5ff">
+          <div class="readout-label">Memory</div>
+          <div class="readout-value">12.8<span style="font-size:16px">G</span></div>
+          <div class="readout-unit">RAM used/total/% + swap</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:67%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#FDCD06">
+          <div class="readout-label">Disk</div>
+          <div class="readout-value">1.4<span style="font-size:16px">T</span></div>
+          <div class="readout-unit">Root and /home used/total/%</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:47%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#FF8833">
+          <div class="readout-label">Network</div>
+          <div class="readout-value">1<span style="font-size:16px">G</span></div>
+          <div class="readout-unit">DL/UL throughput / IP / MAC</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:32%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#33ff33">
+          <div class="readout-label">GPU</div>
+          <div class="readout-value">NV</div>
+          <div class="readout-unit">NVIDIA util / VRAM / power / clocks</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:58%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#ff4444">
+          <div class="readout-label">Temperature</div>
+          <div class="readout-value">62<span style="font-size:16px">&deg;C</span></div>
+          <div class="readout-unit">CPU and motherboard temp</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:52%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#CC99CC">
+          <div class="readout-label">Fans</div>
+          <div class="readout-value"><span class="fan-icon">&#10058;</span> 1200</div>
+          <div class="readout-unit">CPU + case fan RPMs</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:40%"></div></div>
+        </div>
+
+        <div class="readout-cell" style="--rc-color:#00DDAA">
+          <div class="readout-label">System</div>
+          <div class="readout-value">UP</div>
+          <div class="readout-unit">Hostname / uptime</div>
+          <div class="readout-bar"><div class="readout-bar-fill" style="width:88%"></div></div>
+        </div>
+
+      </div>
+      <div style="padding:12px 16px;font-size:11px;color:#556;line-height:1.6;border-top:1px solid #1a1a1a;">
+        One SSH command per host per 1.5s cycle. Metrics that aren't available
+        (no GPU, no fans, no temp sensors) gracefully show as unavailable.
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       INSTALLATION TERMINAL
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="term">
+    <div class="bezel-header">
+      <span class="label">Deployment Sequence</span>
+      <span class="status">One Command On The Pi</span>
+    </div>
+    <div class="bezel-body" style="padding:0;">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <span>bash &mdash; chiketi-appliance-install</span>
+          <button class="copy-btn" onclick="copyInstall(this)">COPY</button>
+        </div>
+        <div class="terminal-body">
+          <div><span class="comment"># install on your Raspberry Pi / Debian / Ubuntu</span></div>
+          <div style="margin-top:4px;">
+            <span class="prompt">$ </span><span class="cmd">curl -fsSL </span><span class="url" id="install-url">https://raw.githubusercontent.com/rohanprakash12/chiketi-appliance/main/scripts/install.sh</span><span class="cmd"> | bash</span>
+          </div>
+          <div style="margin-top:12px;" class="output" id="install-output"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       CONTROL PANEL CONCEPT
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="coral">
+    <div class="bezel-header">
+      <span class="label">Control Interface // Port 7777</span>
+      <span class="status">Web Panel &middot; Phone or Laptop</span>
+    </div>
+    <div class="bezel-body" style="padding:2px;">
+      <div class="ctrl-panel-visual">
+
+        <div class="ctrl-block">
+          <div class="ctrl-block-label">Host Switcher &middot; Multi-Host</div>
+          <div class="host-row active">
+            <span class="h-led on"></span>
+            <span class="h-name">gpu-server</span>
+            <span class="h-lat">4 ms</span>
+          </div>
+          <div class="host-row">
+            <span class="h-led on"></span>
+            <span class="h-name">web-server</span>
+            <span class="h-lat">7 ms</span>
+          </div>
+          <div class="host-row">
+            <span class="h-led off"></span>
+            <span class="h-name">nas</span>
+            <span class="h-lat">offline</span>
+          </div>
+          <div style="font-size:10px;color:#556;line-height:1.6;margin-top:8px;">
+            Click to switch &middot; auto-rotate hosts &middot; press <span style="color:#FFCC66">H</span> on the display to cycle.
+          </div>
+        </div>
+
+        <div class="ctrl-block">
+          <div class="ctrl-block-label">Theme Selector</div>
+          <div class="ctrl-theme-row">
+            <span class="ctrl-chip active" style="--chip-color:#FDCD06;--chip-glow:rgba(253,205,6,0.2)">Gold</span>
+            <span class="ctrl-chip" style="--chip-color:#FFCC66;--chip-glow:rgba(255,204,102,0.2)">Coral</span>
+            <span class="ctrl-chip" style="--chip-color:#2A9D8F;--chip-glow:rgba(42,157,143,0.2)">Teal</span>
+            <span class="ctrl-chip" style="--chip-color:#00ff41;--chip-glow:rgba(0,255,65,0.2)">Hacker</span>
+            <span class="ctrl-chip" style="--chip-color:#00e5ff;--chip-glow:rgba(0,229,255,0.2)">Cyan</span>
+            <span class="ctrl-chip" style="--chip-color:#ffb000;--chip-glow:rgba(255,176,0,0.2)">Amber</span>
+          </div>
+          <div class="ctrl-theme-row" style="margin-top:6px;">
+            <span class="ctrl-chip" style="--chip-color:#33ff33;--chip-glow:rgba(51,255,51,0.2)">Phosphor</span>
+            <span class="ctrl-chip" style="--chip-color:#ff4444;--chip-glow:rgba(255,68,68,0.2)">Red Alert</span>
+            <span class="ctrl-chip" style="--chip-color:#4488ff;--chip-glow:rgba(68,136,255,0.2)">Blue</span>
+            <span class="ctrl-chip" style="--chip-color:#00FFCC;--chip-glow:rgba(0,255,204,0.2)">Scanlines</span>
+            <span class="ctrl-chip" style="--chip-color:#FF8833;--chip-glow:rgba(255,136,51,0.2)">Tubes</span>
+            <span class="ctrl-chip" style="--chip-color:#00DDAA;--chip-glow:rgba(0,221,170,0.2)">VFD</span>
+          </div>
+        </div>
+
+        <div class="ctrl-block" style="display:flex;align-items:center;gap:24px;">
+          <div>
+            <div class="ctrl-block-label">HTTP Port</div>
+            <div class="port-display nixie">7777</div>
+            <div class="port-label">CONTROL PANEL</div>
+          </div>
+          <div style="flex:1;">
+            <div class="ctrl-block-label" style="margin-bottom:8px;">Pi Display</div>
+            <div class="kiosk-vis">
+              <div class="kiosk-inner">
+                <div class="k-title">CHIKETI</div>
+                <div class="k-res">Chromium kiosk</div>
+                <div class="kiosk-gauges">
+                  <svg viewBox="0 0 24 24"><circle fill="none" cx="12" cy="12" r="9" stroke="#222" stroke-width="3"/><circle fill="none" cx="12" cy="12" r="9" stroke="#FDCD06" stroke-width="3" stroke-dasharray="30 57" transform="rotate(-90 12 12)" style="filter:drop-shadow(0 0 2px #FDCD06)"/></svg>
+                  <svg viewBox="0 0 24 24"><circle fill="none" cx="12" cy="12" r="9" stroke="#222" stroke-width="3"/><circle fill="none" cx="12" cy="12" r="9" stroke="#FF8800" stroke-width="3" stroke-dasharray="38 57" transform="rotate(-90 12 12)" style="filter:drop-shadow(0 0 2px #FF8800)"/></svg>
+                  <svg viewBox="0 0 24 24"><circle fill="none" cx="12" cy="12" r="9" stroke="#222" stroke-width="3"/><circle fill="none" cx="12" cy="12" r="9" stroke="#BF0F0F" stroke-width="3" stroke-dasharray="27 57" transform="rotate(-90 12 12)" style="filter:drop-shadow(0 0 2px #BF0F0F)"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl-block">
+          <div class="ctrl-block-label">Requirements</div>
+          <div style="font-size:12px;color:#667;line-height:1.8;">
+            <div><span style="color:#33ff33">&#9679;</span> Pi: Python 3.11+ &middot; paramiko &middot; PyYAML</div>
+            <div><span style="color:#33ff33">&#9679;</span> Pi: Chromium (auto-detected)</div>
+            <div><span style="color:#00e5ff">&#9679;</span> Remotes: SSH access (key-based)</div>
+            <div><span style="color:#00e5ff">&#9679;</span> Remotes: <strong style="color:#33ff33">nothing else</strong> &mdash; read-only</div>
+            <div><span style="color:#FDCD06">&#9679;</span> NVIDIA GPU on remote (optional)</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       HOW IT DIFFERS FROM CHIKETI
+       ═══════════════════════════════════════════ -->
+  <div class="bezel" data-accent="cyan">
+    <div class="bezel-header">
+      <span class="label">Appliance vs. Chiketi</span>
+      <span class="status">Companion Products</span>
+    </div>
+    <div class="bezel-body" style="padding:2px;">
+      <div class="ctrl-panel-visual">
+        <div class="ctrl-block">
+          <div class="ctrl-block-label" style="color:#667;">chiketi (original)</div>
+          <div style="font-size:12px;color:#778;line-height:1.9;">
+            <div><span style="color:#445">Runs on</span> &middot; the server being monitored</div>
+            <div><span style="color:#445">Collection</span> &middot; local (psutil)</div>
+            <div><span style="color:#445">Install on server</span> &middot; required</div>
+            <div><span style="color:#445">Multi-server</span> &middot; no</div>
+            <div><span style="color:#445">Display</span> &middot; same machine's HDMI</div>
+          </div>
+        </div>
+        <div class="ctrl-block">
+          <div class="ctrl-block-label" style="color:#00e5ff;">chiketi-appliance</div>
+          <div style="font-size:12px;color:#aab;line-height:1.9;">
+            <div><span style="color:#445">Runs on</span> &middot; a separate Raspberry Pi</div>
+            <div><span style="color:#445">Collection</span> &middot; remote over SSH (paramiko)</div>
+            <div><span style="color:#445">Install on server</span> &middot; <span style="color:#33ff33">not required</span></div>
+            <div><span style="color:#445">Multi-server</span> &middot; <span style="color:#33ff33">yes</span></div>
+            <div><span style="color:#445">Display</span> &middot; the Pi's HDMI</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       SCREENSHOTS — uncomment when added (kept out so nothing renders broken)
+       <div class="bezel" data-accent="gold">
+         <div class="bezel-header"><span class="label">Screenshots</span></div>
+         <div class="bezel-body">
+           <img src="../screenshots/setup-wizard.png" alt="Setup Wizard">
+           <img src="../screenshots/dashboard.png" alt="Dashboard">
+         </div>
+       </div>
+       ═══════════════════════════════════════════ -->
+
+  <!-- ═══════════════════════════════════════════
+       FOOTER
+       ═══════════════════════════════════════════ -->
+  <div class="footer-strip">
+    <a href="https://github.com/rohanprakash12/chiketi-appliance" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      SOURCE // GITHUB
+    </a>
+    <span class="sig">CHIKETI APPLIANCE // AGENTLESS REMOTE MONITORING OVER SSH</span>
+  </div>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   BOOT SEQUENCE ANIMATION
+   ═══════════════════════════════════════════ */
+(function() {
+  const lines = document.querySelectorAll('.boot-line');
+  lines.forEach((line, i) => {
+    line.style.opacity = '0';
+    line.style.transform = 'translateX(-10px)';
+    line.style.transition = 'opacity 0.4s, transform 0.4s';
+    setTimeout(() => {
+      line.style.opacity = '1';
+      line.style.transform = 'translateX(0)';
+    }, 200 + i * 180);
+  });
+})();
+
+/* ═══════════════════════════════════════════
+   TERMINAL TYPING EFFECT
+   ═══════════════════════════════════════════ */
+(function() {
+  const output = document.getElementById('install-output');
+  const lines = [
+    '>> Detecting platform ........ aarch64 (Raspberry Pi)',
+    '>> Installing system deps .... python3 chromium',
+    '>> Installing appliance ...... pipx install chiketi-appliance',
+    '>> Enabling service .......... systemctl enable chiketi-appliance',
+    '>> Launching setup wizard .... http://<pi-ip>:7777/',
+    '',
+    '<span class="ok" style="color:#33ff33">APPLIANCE ONLINE</span> // open the wizard // add your servers over SSH'
+  ];
+  let lineIdx = 0;
+  let charIdx = 0;
+  let currentText = '';
+
+  function typeNext() {
+    if (lineIdx >= lines.length) {
+      output.innerHTML += '<br><span class="cursor"></span>';
+      return;
+    }
+    const raw = lines[lineIdx];
+    if (raw.includes('<span')) {
+      output.innerHTML += raw + '<br>';
+      lineIdx++;
+      setTimeout(typeNext, 300);
+      return;
+    }
+    if (charIdx < raw.length) {
+      currentText += raw[charIdx];
+      charIdx++;
+      let html = '';
+      for (let i = 0; i < lineIdx; i++) {
+        html += lines[i] + '<br>';
+      }
+      html += currentText + '<span class="cursor"></span>';
+      output.innerHTML = html;
+      setTimeout(typeNext, 12 + Math.random() * 18);
+    } else {
+      currentText = '';
+      charIdx = 0;
+      lineIdx++;
+      output.innerHTML = output.innerHTML.replace('<span class="cursor"></span>', '<br>');
+      setTimeout(typeNext, 200);
+    }
+  }
+
+  setTimeout(typeNext, 1800);
+})();
+
+/* ═══════════════════════════════════════════
+   COPY BUTTON
+   ═══════════════════════════════════════════ */
+function copyInstall(btn) {
+  const cmd = 'curl -fsSL https://raw.githubusercontent.com/rohanprakash12/chiketi-appliance/main/scripts/install.sh | bash';
+  navigator.clipboard.writeText(cmd).then(() => {
+    btn.textContent = 'COPIED';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'COPY';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+/* ═══════════════════════════════════════════
+   ANIMATE READOUT VALUES (count up)
+   ═══════════════════════════════════════════ */
+(function() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.querySelectorAll('.readout-bar-fill').forEach(bar => {
+          bar.style.animationPlayState = 'running';
+        });
+      }
+    });
+  }, { threshold: 0.2 });
+
+  document.querySelectorAll('.readout-grid').forEach(grid => observer.observe(grid));
+})();
+
+/* ═══════════════════════════════════════════
+   THEME CHIP + HOST ROW INTERACTION
+   ═══════════════════════════════════════════ */
+document.querySelectorAll('.ctrl-chip').forEach(chip => {
+  chip.addEventListener('click', function() {
+    document.querySelectorAll('.ctrl-chip').forEach(c => c.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+document.querySelectorAll('.host-row').forEach(row => {
+  row.addEventListener('click', function() {
+    document.querySelectorAll('.host-row').forEach(r => r.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+/* ═══════════════════════════════════════════
+   SUBTLE GAUGE PULSE (re-trigger periodically)
+   ═══════════════════════════════════════════ */
+(function() {
+  setInterval(() => {
+    document.querySelectorAll('.gauge-fg').forEach(el => {
+      el.style.animation = 'none';
+      el.offsetHeight; // reflow
+      el.style.animation = '';
+    });
+  }, 15000);
+})();
+</script>
+
+</body>
+</html>

@@ -13,3 +13,6 @@ venv/
 *.swo
 *~
 .DS_Store
+.pytest_cache/
+.coverage
+htmlcov/
