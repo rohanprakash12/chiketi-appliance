@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chiketi Control Panel</title>
+<style>__CONTROL_CSS__</style>
+</head>
+<body>
+
+<h1>// CHIKETI</h1>
+<p class="subtitle">Dashboard Control Panel</p>
+
+<div class="main-tabs">
+  <button class="main-tab active" data-tab="themes" onclick="switchTab('themes')">Themes</button>
+  <button class="main-tab" data-tab="hosts" onclick="switchTab('hosts')">Hosts</button>
+  <button class="main-tab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
+</div>
+
+<div id="tab-themes" class="tab-content active">
+  <div class="theme-controls">
+    <select id="categorySelect" class="category-select"></select>
+    <div class="variant-row" id="variantRow"></div>
+  </div>
+  <div class="screens" id="screens"></div>
+</div>
+
+<div id="tab-hosts" class="tab-content">
+  <div class="settings-section">
+    <h3>Remote Hosts</h3>
+    <div id="hostList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div style="margin-top:12px;border-top:1px solid #333;padding-top:12px">
+      <h4 style="color:#999;font-size:12px;margin-bottom:8px">ADD NEW HOST</h4>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <input type="text" id="newHostName" placeholder="Friendly name (e.g. gpu-server)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="text" id="newHostAddr" placeholder="IP or hostname (e.g. 192.168.1.50)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="text" id="newHostUser" placeholder="SSH username" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="password" id="newHostPassword" placeholder="SSH password (for key setup, not stored)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <div style="display:flex;gap:6px">
+          <input type="number" id="newHostPort" placeholder="Port" value="22" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px;width:80px">
+          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Test</button>
+          <button id="btnCopyKey" onclick="cpCopyKey()" style="flex:1;background:#1a2a3a;border:1px solid #2a4a6a;color:#4af;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Setup Key</button>
+          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Add</button>
+        </div>
+        <div id="hostActionStatus" style="font-size:11px;min-height:16px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-settings" class="tab-content">
+  <div class="settings-section">
+    <h3>Display</h3>
+    <div class="setting-row">
+      <span class="setting-label">Dashboard</span>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <div id="powerToggle" style="width:44px;height:24px;border-radius:12px;background:#333;position:relative;transition:background 0.3s;cursor:pointer">
+          <div style="width:20px;height:20px;border-radius:50%;background:#888;position:absolute;top:2px;left:2px;transition:all 0.3s"></div>
+        </div>
+        <span id="powerLabel" style="color:#888;font-size:13px">OFF</span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Output</span>
+      <select id="outputSelect" class="setting-select"></select>
+      <button id="scanDisplays" class="setting-btn" style="font-size:11px;padding:4px 10px">Scan</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Brightness</span>
+      <input type="range" id="brightnessSlider" min="0.3" max="2.0" step="0.1" value="1.0" style="width:160px">
+      <span id="brightnessVal" style="color:#0f0;font-size:13px">1.0</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Resolution</span>
+      <span id="resDisplay" style="color:#0f0;font-size:13px">--</span>
+    </div>
+  </div>
+  <div class="settings-section">
+    <h3>Screen Rotation</h3>
+    <div id="screenRotationList" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+  <div class="setting-row" style="margin-top:16px">
+    <button id="applySettings" class="setting-btn" style="padding:8px 24px">Apply Settings</button>
+    <span id="settingsStatus" style="color:#555;font-size:12px;margin-left:12px"></span>
+  </div>
+</div>
+
+<p class="status" id="status"></p>
+
+<script>__CONTROL_SCRIPTS__</script>
+</body>
+</html>
