@@ -10,18 +10,22 @@ __FONTS_CSS__  * { margin: 0; padding: 0; box-sizing: border-box; }
   }
   .t-1col-3row {
     grid-template-columns: 1fr;
-    grid-template-rows: 5fr 3fr 2fr;
+    grid-template-rows: 5fr 3fr 3fr;
   }
-  .t-panel { padding: 8px 10px; overflow: hidden; }
+  .t-panel {
+    padding: 14px 16px; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: center;
+  }
   .t-title {
-    font-size: 18px; margin-bottom: 6px; white-space: nowrap;
+    font-size: 19px; margin-bottom: 12px; white-space: nowrap;
     font-family: 'Consolas', 'DejaVu Sans Mono', monospace;
   }
   .t-row {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 16px; margin-bottom: 3px; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 17px; margin-bottom: 9px; white-space: nowrap;
     font-family: 'Consolas', 'DejaVu Sans Mono', monospace;
   }
+  .t-row:last-child { margin-bottom: 0; }
   .t-label { flex-shrink: 0; }
   .t-bar {
     flex: 1; height: 16px; display: flex; border-radius: 1px; overflow: hidden;

@@ -12,13 +12,19 @@ function donut(pct, label, ringColor, size, sw, font, opts) {
   const circ = 2 * Math.PI * r;
   const offset = circ - (Math.min(100, Math.max(0, pct)) / 100) * circ;
   const cx = size / 2, cy = size / 2;
+  // Render size in cqw so the donut scales with its container instead of a
+  // fixed px size. A fixed-px donut overflows in any frame narrower than the
+  // 1024px kiosk (the control-panel preview and mobile), colliding with the
+  // SECONDARY bar below. At 1024px this resolves to the original px size, so
+  // the actual kiosk display is unchanged.
+  const cq = (size / 1024 * 100).toFixed(3);
   // Gold uses anticlockwise (scale(-1,1)), Coral/Teal use clockwise (rotate(-90))
   const xform = opts.anticlockwise
     ? `translate(${size}, 0) scale(-1, 1) rotate(-90 ${cx} ${cy})`
     : `rotate(-90 ${cx} ${cy})`;
   return `<div style="text-align:center">` +
     `<div style="color:${labelColor};font-size:${opts.labelSize||'2.34cqw'};font-family:${font};font-weight:${labelFW};letter-spacing:1px;margin-bottom:2px;text-transform:uppercase">${label}</div>` +
-    `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="width:${cq}cqw;height:${cq}cqw;max-width:100%;display:block;margin:0 auto">` +
       `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${bgRing}" stroke-width="${sw}"/>` +
       `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${ringColor}" stroke-width="${sw}" ` +
         `stroke-dasharray="${circ}" stroke-dashoffset="${offset}" stroke-linecap="${linecap}" ` +
@@ -28,10 +34,15 @@ function donut(pct, label, ringColor, size, sw, font, opts) {
     `</svg></div>`;
 }
 
-/* ── Thermal scale with tick marks ── */
+/* ── Thermal scale with tick marks ──
+ * The tick track is inset on both ends (`edge`) so the first/last labels (20
+ * and 120) sit fully inside the panel instead of being clipped at the right
+ * border. `marginLeft` aligns the track start with the thermBar fill (label
+ * column width + the row gap); a matching right inset keeps spacing even. */
 function thermalScale(tickColor, font, marginLeft) {
   const marks = [20, 50, 70, 90, 110, 120];
-  let html = `<div style="margin-left:${marginLeft||'4.69cqw'};position:relative;height:2.34cqw">` +
+  const edge = '1.4cqw'; // half-width of an end label, kept clear of the panel edge
+  let html = `<div style="margin-left:${marginLeft||'5.57cqw'};margin-right:${edge};position:relative;height:2.34cqw">` +
     `<div style="position:absolute;top:0;left:0;right:0;height:1px;background:#333"></div>`;
   for (const t of marks) {
     const pct = ((t - 20) / 100) * 100;
@@ -259,8 +270,8 @@ function panelGoldScreen1(c) {
     , `<span style="color:${thermalStatusColor}">${thermalStatus}</span>`) +
     lPanel('COMMS', TEAL,
       `<div style="font-family:${F}">` +
-        `<div style="display:flex;justify-content:space-between"><span style="color:#666;font-size:2.05cqw">IP</span><span style="color:#ddd;font-size:4.10cqw;font-weight:700">${ip.available?ip.value:'N/A'}</span></div>` +
-        `<div style="display:flex;justify-content:space-between"><span style="color:#666;font-size:2.05cqw">MAC</span><span style="color:#ddd;font-size:4.10cqw;font-weight:700">${mac.available?mac.value:'N/A'}</span></div>` +
+        `<div style="display:flex;justify-content:space-between"><span style="color:#9aa0a6;font-size:2.05cqw">IP</span><span style="color:#ddd;font-size:4.10cqw;font-weight:700">${ip.available?ip.value:'N/A'}</span></div>` +
+        `<div style="display:flex;justify-content:space-between"><span style="color:#9aa0a6;font-size:2.05cqw">MAC</span><span style="color:#ddd;font-size:4.10cqw;font-weight:700">${mac.available?mac.value:'N/A'}</span></div>` +
       `</div>` +
       `<div style="display:flex;justify-content:space-around;align-items:center;font-family:${F}">` +
         `<div style="display:flex;align-items:center;gap:0.88cqw"><svg width="2.64cqw" height="2.64cqw" viewBox="0 0 24 24"><polygon points="12,2 4,14 20,14" fill="${GREEN}"/></svg><span style="color:${GREEN};font-size:4.69cqw;font-weight:700">${ul.available?ul.value:'0'} <span style="font-size:2.34cqw">${ul.available?ul.unit:'B/s'}</span></span></div>` +
@@ -269,13 +280,13 @@ function panelGoldScreen1(c) {
     , speedStr) +
     lPanel('NPU', GOLD,
       `<div style="font-family:${F}">` +
-        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#666;font-size:2.05cqw;flex-shrink:0">MODEL</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right">${cleanModel()}</span></div>` +
-        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#666;font-size:2.05cqw">QUANT</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700">${mv('llama.quant')}</span></div>` +
-        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#666;font-size:2.05cqw">CTX</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700">${mv('llama.context')}</span></div>` +
+        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#9aa0a6;font-size:2.05cqw;flex-shrink:0">MODEL</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right">${cleanModel()}</span></div>` +
+        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#9aa0a6;font-size:2.05cqw">QUANT</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700">${mv('llama.quant')}</span></div>` +
+        `<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#9aa0a6;font-size:2.05cqw">CTX</span><span style="color:#ddd;font-size:3.22cqw;font-weight:700">${mv('llama.context')}</span></div>` +
       `</div>` +
       `<div style="display:flex;justify-content:space-between;align-items:baseline;font-family:${F}">` +
-        `<div style="display:flex;align-items:baseline;gap:0.59cqw"><span style="color:#666;font-size:2.05cqw">T/S</span><span style="color:#ddd;font-size:4.69cqw;font-weight:700">${tokSec.available?Math.round(tokSec.value):'--'}</span></div>` +
-        `<div style="display:flex;align-items:baseline;gap:0.59cqw"><span style="color:#666;font-size:2.05cqw">VRAM</span><span style="color:#ddd;font-size:4.69cqw;font-weight:700">${vramStr}</span></div>` +
+        `<div style="display:flex;align-items:baseline;gap:0.59cqw"><span style="color:#9aa0a6;font-size:2.05cqw">T/S</span><span style="color:#ddd;font-size:4.69cqw;font-weight:700">${tokSec.available?Math.round(tokSec.value):'--'}</span></div>` +
+        `<div style="display:flex;align-items:baseline;gap:0.59cqw"><span style="color:#9aa0a6;font-size:2.05cqw">VRAM</span><span style="color:#ddd;font-size:4.69cqw;font-weight:700">${vramStr}</span></div>` +
       `</div>`
     , 'LLAMA.CPP') +
     `</div></div>`;
@@ -359,7 +370,7 @@ function panelCoralScreen1(c) {
         coralBar('CPU', cpuTemp.available?cpuTemp.value:20) +
         coralBar('MB', mbTemp.available?mbTemp.value:20) +
         coralBar('GPU', gpuTemp.available?gpuTemp.value:20) +
-        thermalScale(T.tanoi||'#FFCC99', F, '4.69cqw') +
+        thermalScale(T.tanoi||'#FFCC99', F, '5.57cqw') +
       `</div>` +
     `</div>` +
     `<div style="display:flex;gap:0.88cqw;align-items:center">` +

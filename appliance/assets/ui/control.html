@@ -30,17 +30,17 @@
     <h3>Remote Hosts</h3>
     <div id="hostList" style="display:flex;flex-direction:column;gap:8px"></div>
     <div style="margin-top:12px;border-top:1px solid #333;padding-top:12px">
-      <h4 style="color:#999;font-size:12px;margin-bottom:8px">ADD NEW HOST</h4>
+      <h4 style="color:#9aa0a6;font-size:12px;margin-bottom:8px">ADD NEW HOST</h4>
       <div style="display:flex;flex-direction:column;gap:6px">
-        <input type="text" id="newHostName" placeholder="Friendly name (e.g. gpu-server)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
-        <input type="text" id="newHostAddr" placeholder="IP or hostname (e.g. 192.168.1.50)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
-        <input type="text" id="newHostUser" placeholder="SSH username" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
-        <input type="password" id="newHostPassword" placeholder="SSH password (for key setup, not stored)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px">
+        <input type="text" id="newHostName" placeholder="Friendly name (e.g. gpu-server)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:10px 10px;min-height:44px;border-radius:4px;font-size:14px">
+        <input type="text" id="newHostAddr" placeholder="IP or hostname (e.g. 192.168.1.50)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:10px 10px;min-height:44px;border-radius:4px;font-size:14px">
+        <input type="text" id="newHostUser" placeholder="SSH username" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:10px 10px;min-height:44px;border-radius:4px;font-size:14px">
+        <input type="password" id="newHostPassword" placeholder="SSH password (for key setup, not stored)" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:10px 10px;min-height:44px;border-radius:4px;font-size:14px">
         <div style="display:flex;gap:6px">
-          <input type="number" id="newHostPort" placeholder="Port" value="22" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:4px;font-size:12px;width:80px">
-          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Test</button>
-          <button id="btnCopyKey" onclick="cpCopyKey()" style="flex:1;background:#1a2a3a;border:1px solid #2a4a6a;color:#4af;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Setup Key</button>
-          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:6px;border-radius:4px;font-size:12px;cursor:pointer">Add</button>
+          <input type="number" id="newHostPort" placeholder="Port" value="22" style="background:#1a1a1a;border:1px solid #333;color:#fff;padding:10px 10px;min-height:44px;border-radius:4px;font-size:14px;width:80px">
+          <button id="btnTestHost" onclick="cpTestHost()" style="flex:1;background:#222;border:1px solid #444;color:#fff;padding:10px 6px;min-height:44px;border-radius:4px;font-size:13px;cursor:pointer">Test</button>
+          <button id="btnCopyKey" onclick="cpCopyKey()" style="flex:1;background:#1a2a3a;border:1px solid #2a4a6a;color:#4af;padding:10px 6px;min-height:44px;border-radius:4px;font-size:13px;cursor:pointer">Setup Key</button>
+          <button id="btnAddHost" onclick="cpAddHost()" style="flex:1;background:#1a3a1a;border:1px solid #2a5a2a;color:#0f0;padding:10px 6px;min-height:44px;border-radius:4px;font-size:13px;cursor:pointer">Add</button>
         </div>
         <div id="hostActionStatus" style="font-size:11px;min-height:16px"></div>
       </div>
@@ -53,7 +53,7 @@
     <h3>Display</h3>
     <div class="setting-row">
       <span class="setting-label">Dashboard</span>
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;min-height:44px">
         <div id="powerToggle" style="width:44px;height:24px;border-radius:12px;background:#333;position:relative;transition:background 0.3s;cursor:pointer">
           <div style="width:20px;height:20px;border-radius:50%;background:#888;position:absolute;top:2px;left:2px;transition:all 0.3s"></div>
         </div>
@@ -67,7 +67,7 @@
     </div>
     <div class="setting-row">
       <span class="setting-label">Brightness</span>
-      <input type="range" id="brightnessSlider" min="0.3" max="2.0" step="0.1" value="1.0" style="width:160px">
+      <input type="range" id="brightnessSlider" min="0.3" max="2.0" step="0.1" value="1.0" style="width:160px;height:24px;min-height:44px">
       <span id="brightnessVal" style="color:#0f0;font-size:13px">1.0</span>
     </div>
     <div class="setting-row">
